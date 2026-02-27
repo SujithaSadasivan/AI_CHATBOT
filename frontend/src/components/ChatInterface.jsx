@@ -23,6 +23,9 @@ const ChatInterface = ({ user, onLogout }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [backendStatus, setBackendStatus] = useState('checking');
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [chatSessions, setChatSessions] = useState([]);
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [chatMessages, setChatMessages] = useState({});
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const userMenuRef = useRef(null);
@@ -44,6 +47,13 @@ const ChatInterface = ({ user, onLogout }) => {
   useEffect(() => {
     checkBackendConnection();
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      console.log('User object in ChatInterface:', user); // Debug log
+      fetchChatSessions();
+    }
+  }, [user]);
 
   useEffect(() => {
     scrollToBottom();
@@ -69,6 +79,133 @@ const ChatInterface = ({ user, onLogout }) => {
     }
   };
 
+  const fetchChatSessions = async () => {
+    try {
+      if (!user || !user.id) {
+        console.error('User ID is missing:', user);
+        return;
+      }
+      
+      console.log('Fetching sessions for user ID:', user.id);
+      
+      const response = await axios.get(`${API_URL}/chat/sessions`, {
+        params: { user_id: user.id }
+      });
+      
+      console.log('Chat sessions response:', response.data);
+      setChatSessions(response.data || []);
+      
+      // Load messages for each session
+      if (response.data && response.data.length > 0) {
+        response.data.forEach(session => {
+          fetchChatMessages(session._id || session.id);
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching chat sessions:', error);
+    }
+  };
+
+  const fetchChatMessages = async (chatId) => {
+    try {
+      if (!chatId) return;
+      
+      const response = await axios.get(`${API_URL}/chat/${chatId}/messages`);
+      setChatMessages(prev => ({
+        ...prev,
+        [chatId]: response.data || []
+      }));
+    } catch (error) {
+      console.error('Error fetching chat messages:', error);
+    }
+  };
+
+  const createNewChat = async () => {
+    try {
+      if (!user || !user.id) {
+        console.error('User ID is missing:', user);
+        alert('Please log in again');
+        return;
+      }
+      
+      console.log('Creating new chat for user ID:', user.id);
+      
+      const response = await axios.post(`${API_URL}/chat/create`, {
+        user_id: user.id,
+        title: 'New Chat'
+      });
+      
+      console.log('Create chat response:', response.data);
+      
+      const newChat = response.data;
+      setChatSessions(prev => [newChat, ...prev]);
+      setCurrentChatId(newChat._id || newChat.id);
+      
+      // Reset messages to welcome message for new chat
+      setMessages([{
+        id: 1,
+        type: 'bot',
+        content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
+        timestamp: new Date()
+      }]);
+    } catch (error) {
+      console.error('Error creating new chat:', error);
+      if (error.response) {
+        console.error('Error response:', error.response.data);
+        alert(`Failed to create chat: ${error.response.data.detail || 'Unknown error'}`);
+      } else {
+        alert('Failed to create new chat. Please try again.');
+      }
+    }
+  };
+
+  const loadChat = async (chatId) => {
+    setCurrentChatId(chatId);
+    
+    // Load messages from this chat
+    if (chatMessages[chatId]) {
+      setMessages(chatMessages[chatId]);
+    } else {
+      await fetchChatMessages(chatId);
+    }
+    
+    // Close sidebar on mobile
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
+  };
+
+  const saveMessage = async (chatId, messageData) => {
+    try {
+      await axios.post(`${API_URL}/chat/message`, {
+        chat_id: chatId,
+        ...messageData
+      });
+    } catch (error) {
+      console.error('Error saving message:', error);
+    }
+  };
+
+  const updateChatTitle = async (chatId, firstUserMessage) => {
+    try {
+      // Generate a title from the first user message (first few words)
+      const title = firstUserMessage.split(' ').slice(0, 5).join(' ') + '...';
+      
+      await axios.put(`${API_URL}/chat/${chatId}`, {
+        title: title
+      });
+      
+      // Update chat sessions list
+      setChatSessions(prev => 
+        prev.map(chat => 
+          (chat._id === chatId || chat.id === chatId) ? { ...chat, title: title } : chat
+        )
+      );
+    } catch (error) {
+      console.error('Error updating chat title:', error);
+    }
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -77,20 +214,72 @@ const ChatInterface = ({ user, onLogout }) => {
     e.preventDefault();
     if (!inputMessage.trim() || isLoading || backendStatus !== 'online') return;
 
+    // Create new chat if none exists
+    let chatId = currentChatId;
+    if (!chatId) {
+      try {
+        if (!user || !user.id) {
+          console.error('User ID is missing:', user);
+          alert('Please log in again');
+          return;
+        }
+        
+        console.log('Creating new chat for message with user ID:', user.id);
+        
+        const response = await axios.post(`${API_URL}/chat/create`, {
+          user_id: user.id,
+          title: 'New Chat'
+        });
+        
+        console.log('Create chat response:', response.data);
+        
+        chatId = response.data._id || response.data.id;
+        setCurrentChatId(chatId);
+        setChatSessions(prev => [response.data, ...prev]);
+      } catch (error) {
+        console.error('Error creating chat:', error);
+        if (error.response) {
+          alert(`Failed to create chat: ${error.response.data.detail || 'Unknown error'}`);
+        } else {
+          alert('Failed to create chat. Please try again.');
+        }
+        return;
+      }
+    }
+
     const userMessage = {
       id: Date.now(),
       type: 'user',
       content: inputMessage,
-      timestamp: new Date()
+      timestamp: new Date(),
+      chat_id: chatId
     };
+
+    // Check if this is the first user message to update chat title
+    const isFirstUserMessage = messages.filter(m => m.type === 'user').length === 0;
 
     setMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsLoading(true);
 
+    // Save user message to database
+    await saveMessage(chatId, {
+      type: 'user',
+      content: inputMessage
+    });
+
+    // Update chat title if this is the first user message
+    if (isFirstUserMessage) {
+      await updateChatTitle(chatId, inputMessage);
+    }
+
     try {
+      // Include chat_id in the ask request to save bot response automatically
       const response = await axios.get(`${API_URL}/ask`, {
-        params: { question: inputMessage },
+        params: { 
+          question: inputMessage,
+          chat_id: chatId  // Send chat_id to backend
+        },
         timeout: 30000
       });
 
@@ -98,17 +287,36 @@ const ChatInterface = ({ user, onLogout }) => {
         id: Date.now() + 1,
         type: 'bot',
         content: response.data.answer || "I couldn't find an answer to your question.",
-        timestamp: new Date()
+        timestamp: new Date(),
+        chat_id: chatId
       };
 
       setMessages(prev => [...prev, botMessage]);
+
+      // Update messages in chatMessages state
+      setChatMessages(prev => ({
+        ...prev,
+        [chatId]: [...(prev[chatId] || []), userMessage, botMessage]
+      }));
+
     } catch (error) {
-      setMessages(prev => [...prev, {
+      console.error('Error getting answer:', error);
+      
+      const errorMessage = {
         id: Date.now() + 1,
         type: 'bot',
         content: "Sorry, I encountered an error. Please try again.",
-        timestamp: new Date()
-      }]);
+        timestamp: new Date(),
+        chat_id: chatId
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
+      
+      // Save error message to database
+      await saveMessage(chatId, {
+        type: 'bot',
+        content: errorMessage.content
+      });
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
@@ -116,7 +324,7 @@ const ChatInterface = ({ user, onLogout }) => {
   };
 
   const formatTime = (date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const formatDate = (date) => {
@@ -124,14 +332,26 @@ const ChatInterface = ({ user, onLogout }) => {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
     
-    if (date.toDateString() === today.toDateString()) {
+    const messageDate = new Date(date);
+    
+    if (messageDate.toDateString() === today.toDateString()) {
       return 'Today';
-    } else if (date.toDateString() === yesterday.toDateString()) {
+    } else if (messageDate.toDateString() === yesterday.toDateString()) {
       return 'Yesterday';
     } else {
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return messageDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }
   };
+
+  // Group chats by date
+  const groupedChats = chatSessions.reduce((groups, chat) => {
+    const dateKey = formatDate(chat.created_at || chat.timestamp || new Date());
+    if (!groups[dateKey]) {
+      groups[dateKey] = [];
+    }
+    groups[dateKey].push(chat);
+    return groups;
+  }, {});
 
   // Main page centered content items - Vertical list with SVG icons
   const exploreTopics = [
@@ -140,28 +360,6 @@ const ChatInterface = ({ user, onLogout }) => {
     { icon: Cog, text: 'Manufacturing techniques' },
     { icon: CheckCircle, text: 'Quality standards' },
   ];
-
-  // Mock chat history with dates
-  const chatHistory = [
-    { id: 1, title: 'Steel properties discussion', date: new Date() },
-    { id: 2, title: 'Manufacturing processes', date: new Date() },
-    { id: 3, title: 'Heat treatment specs', date: new Date(new Date().setDate(new Date().getDate() - 1)) },
-    { id: 4, title: 'Quality standards', date: new Date(new Date().setDate(new Date().getDate() - 1)) },
-    { id: 5, title: 'Stainless steel grades', date: new Date(new Date().setDate(new Date().getDate() - 3)) },
-    { id: 6, title: 'Rolling process', date: new Date(new Date().setDate(new Date().getDate() - 5)) },
-    { id: 7, title: 'Material properties', date: new Date(new Date().setDate(new Date().getDate() - 8)) },
-    { id: 8, title: 'Testing methods', date: new Date(new Date().setDate(new Date().getDate() - 10)) },
-  ];
-
-  // Group chats by date
-  const groupedChats = chatHistory.reduce((groups, chat) => {
-    const dateKey = formatDate(chat.date);
-    if (!groups[dateKey]) {
-      groups[dateKey] = [];
-    }
-    groups[dateKey].push(chat);
-    return groups;
-  }, {});
 
   // Get user initials for avatar
   const getUserInitials = () => {
@@ -174,8 +372,8 @@ const ChatInterface = ({ user, onLogout }) => {
     return 'U';
   };
 
-  // Check if there are any messages beyond the welcome message
-  const hasUserMessages = messages.length > 1;
+  // Check if there are any user messages
+  const hasUserMessages = messages.some(m => m.type === 'user');
 
   return (
     <div 
@@ -197,7 +395,7 @@ const ChatInterface = ({ user, onLogout }) => {
           {/* New Chat Button - Dark grey with white font */}
           <div className="px-4 pb-4">
             <button 
-              onClick={() => setMessages([messages[0]])}
+              onClick={createNewChat}
               className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition shadow-md"
             >
               <PlusCircle className="h-4 w-4" />
@@ -207,28 +405,37 @@ const ChatInterface = ({ user, onLogout }) => {
 
           {/* Chat History with Date Groups - Hide scrollbar */}
           <div className="flex-1 px-4 overflow-y-auto scrollbar-hide">
-            {Object.entries(groupedChats).map(([dateGroup, chats]) => (
-              <div key={dateGroup} className="mb-4">
-                <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-                  {dateGroup}
-                </h2>
-                <div className="space-y-1">
-                  {chats.map((chat) => (
-                    <button
-                      key={chat.id}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-300 transition group"
-                    >
-                      <p className="text-sm font-medium text-gray-800 group-hover:text-gray-900 truncate">
-                        {chat.title}
-                      </p>
-                      <p className="text-xs text-gray-600">
-                        {chat.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                    </button>
-                  ))}
+            {Object.keys(groupedChats).length > 0 ? (
+              Object.entries(groupedChats).map(([dateGroup, chats]) => (
+                <div key={dateGroup} className="mb-4">
+                  <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                    {dateGroup}
+                  </h2>
+                  <div className="space-y-1">
+                    {chats.map((chat) => (
+                      <button
+                        key={chat._id || chat.id}
+                        onClick={() => loadChat(chat._id || chat.id)}
+                        className={`w-full text-left px-3 py-2 rounded-lg transition group ${
+                          currentChatId === (chat._id || chat.id) ? 'bg-gray-300' : 'hover:bg-gray-300'
+                        }`}
+                      >
+                        <p className="text-sm font-medium text-gray-800 group-hover:text-gray-900 truncate">
+                          {chat.title || 'New Chat'}
+                        </p>
+                        <p className="text-xs text-gray-600">
+                          {formatTime(chat.created_at || chat.timestamp || new Date())}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
                 </div>
+              ))
+            ) : (
+              <div className="text-center text-gray-500 text-sm py-4">
+                No chat history yet
               </div>
-            ))}
+            )}
           </div>
 
           {/* User Profile with Three Dots Menu - White container with gray-700 background */}
@@ -313,21 +520,14 @@ const ChatInterface = ({ user, onLogout }) => {
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4 scrollbar-hide">
           {hasUserMessages ? (
-            // Show messages after the welcome message
-            messages.slice(1).map((message) => (
+            // Show all user and bot messages
+            messages.filter(m => m.type === 'user' || (m.type === 'bot' && m.id !== 1)).map((message) => (
               <div
                 key={message.id}
                 className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div className={`flex max-w-[75%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} space-x-3`}>
-                  {/* Avatar - Only show for user messages */}
-                  {message.type === 'user' && (
-                    <div className="flex-shrink-0 w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center shadow-sm">
-                      <span className="text-sm font-semibold text-white">
-                        {getUserInitials()}
-                      </span>
-                    </div>
-                  )}
+                  
                   
                   {/* Message Content */}
                   <div>
@@ -356,7 +556,7 @@ const ChatInterface = ({ user, onLogout }) => {
           ) : (
             // Centered content when no user messages - Vertical list with heading
             <div className="h-full flex flex-col items-center justify-center -mt-16">
-              <h2 className="text-3xl font-bold text-gray-800 mb-8">ASK ANYTHING YOU WANT!</h2>
+              <h2 className="text-3xl font-bold text-gray-800 mb-8">ASK ANYTHING YOU WANT</h2>
               <div className="w-full max-w-md space-y-3">
                 {exploreTopics.map((topic, index) => {
                   const IconComponent = topic.icon;
@@ -391,7 +591,7 @@ const ChatInterface = ({ user, onLogout }) => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area - Removed border and adjusted styling */}
+        {/* Input Area */}
         <div className="bg-white px-6 py-4 shadow-sm">
           <form onSubmit={handleSendMessage} className="flex space-x-3">
             <input

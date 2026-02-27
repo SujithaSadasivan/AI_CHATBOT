@@ -15,6 +15,7 @@ const LandingPage = ({ onLogin }) => {
 
   const [formData, setFormData] = useState({
     username: '',
+    email: '',
     password: '',
     confirmPassword: '',
     full_name: ''
@@ -56,6 +57,18 @@ const LandingPage = ({ onLogin }) => {
         setError('Full name is required');
         return false;
       }
+      if (!formData.email.trim()) {
+        setError('Email is required');
+        return false;
+      }
+      if (!formData.email.includes('@')) {
+        setError('Please enter a valid email');
+        return false;
+      }
+      if (formData.username.length < 3) {
+        setError('Username must be at least 3 characters');
+        return false;
+      }
     }
     if (!formData.username.trim()) {
       setError('Username is required');
@@ -74,26 +87,54 @@ const LandingPage = ({ onLogin }) => {
 
     try {
       if (isLogin) {
+        // Login - use /api/login/json which returns user data directly
+        console.log('Attempting login with username:', formData.username);
+        
         const response = await axios.post(`${API_URL}/api/login/json`, {
           username: formData.username,
           password: formData.password
+        }, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
         });
 
+        console.log('Login response:', response.data);
+
+        // Save token and user data
         localStorage.setItem('token', response.data.access_token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
+        
+        // Call onLogin with user data
         onLogin(response.data.user);
       } else {
-        await axios.post(`${API_URL}/api/register`, {
+        // Register - use /api/register (with /api/ prefix)
+        const registrationData = {
           username: formData.username,
+          email: formData.email,
           full_name: formData.full_name,
           password: formData.password
+        };
+
+        console.log('Registering with data:', registrationData);
+        console.log('Sending to:', `${API_URL}/api/register`);
+
+        const response = await axios.post(`${API_URL}/api/register`, registrationData, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
         });
 
+        console.log('Registration response:', response.data);
+
         setSuccess('Registration successful! Please login.');
+        
+        // Clear form and switch to login after 2 seconds
         setTimeout(() => {
           setIsLogin(true);
           setFormData({
             username: '',
+            email: '',
             password: '',
             confirmPassword: '',
             full_name: ''
@@ -101,7 +142,40 @@ const LandingPage = ({ onLogin }) => {
         }, 2000);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Authentication failed');
+      console.error('Auth error:', err);
+      
+      if (err.response) {
+        console.error('Error status:', err.response.status);
+        console.error('Error data:', err.response.data);
+        
+        // Extract error message
+        let errorMessage = '';
+        
+        if (err.response.data) {
+          if (typeof err.response.data === 'string') {
+            errorMessage = err.response.data;
+          } else if (err.response.data.detail) {
+            if (Array.isArray(err.response.data.detail)) {
+              // Pydantic validation errors - show exactly what's wrong
+              errorMessage = err.response.data.detail.map(d => {
+                return `${d.loc.join('.')}: ${d.msg}`;
+              }).join(', ');
+            } else {
+              errorMessage = err.response.data.detail;
+            }
+          } else if (err.response.data.message) {
+            errorMessage = err.response.data.message;
+          } else {
+            errorMessage = JSON.stringify(err.response.data);
+          }
+        }
+        
+        setError(errorMessage || 'Authentication failed');
+      } else if (err.request) {
+        setError('No response from server. Please check if the backend is running.');
+      } else {
+        setError('An error occurred. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -113,6 +187,7 @@ const LandingPage = ({ onLogin }) => {
     setSuccess('');
     setFormData({
       username: '',
+      email: '',
       password: '',
       confirmPassword: '',
       full_name: ''
@@ -130,6 +205,7 @@ const LandingPage = ({ onLogin }) => {
     setSuccess('');
     setFormData({
       username: '',
+      email: '',
       password: '',
       confirmPassword: '',
       full_name: ''
@@ -167,7 +243,7 @@ const LandingPage = ({ onLogin }) => {
           }}
           loading="eager"
           decoding="sync"
-          fetchpriority="high"
+          fetchPriority="high"
           onLoad={() => setImageLoaded(true)}
           onError={() => setImageError(true)}
         />
@@ -248,13 +324,15 @@ const LandingPage = ({ onLogin }) => {
                 <h1 className="text-5xl font-bold tracking-tight text-black drop-shadow-md">
                   {isLogin ? (
                     <>
-
-                      <span className="text-blue-600">WELCOME!</span>
+                      <span className="text-black">WELCOME</span>
+                      <br />
+                      <span className="text-blue-600">BACK</span>
                     </>
                   ) : (
                     <>
-
-                      <span className="text-blue-600">JOIN US!</span>
+                      <span className="text-black">CREATE</span>
+                      <br />
+                      <span className="text-blue-600">ACCOUNT</span>
                     </>
                   )}
                 </h1>
@@ -266,7 +344,7 @@ const LandingPage = ({ onLogin }) => {
                     : 'Join Steel RAG to access AI assistance'}
                 </p>
 
-                {/* Simple Form - No Email */}
+                {/* Form */}
                 <form onSubmit={handleSubmit} className="space-y-4 pt-2">
                   {/* Username */}
                   <div className="relative">
@@ -275,13 +353,30 @@ const LandingPage = ({ onLogin }) => {
                       name="username"
                       value={formData.username}
                       onChange={handleChange}
-                      className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 bg-white text-gray-900 placeholder-gray-500"
-                      placeholder="Username"
+                      className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 bg-white/90 backdrop-blur-sm text-gray-900 placeholder-gray-500"
+                      placeholder="Username (min. 3 characters)"
                       required
                       style={{ fontFamily: 'inherit' }}
                     />
                     <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500" />
                   </div>
+
+                  {/* Email - Only for Signup */}
+                  {!isLogin && (
+                    <div className="relative">
+                      <input
+                        type="email"
+                        name="email"
+                        value={formData.email}
+                        onChange={handleChange}
+                        className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 bg-white/90 backdrop-blur-sm text-gray-900 placeholder-gray-500"
+                        placeholder="Email"
+                        required={!isLogin}
+                        style={{ fontFamily: 'inherit' }}
+                      />
+                      <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500" />
+                    </div>
+                  )}
 
                   {/* Full Name - Only for Signup */}
                   {!isLogin && (
@@ -291,7 +386,7 @@ const LandingPage = ({ onLogin }) => {
                         name="full_name"
                         value={formData.full_name}
                         onChange={handleChange}
-                        className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 bg-white text-gray-900 placeholder-gray-500"
+                        className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 bg-white/90 backdrop-blur-sm text-gray-900 placeholder-gray-500"
                         placeholder="Full Name"
                         required={!isLogin}
                         style={{ fontFamily: 'inherit' }}
@@ -307,8 +402,8 @@ const LandingPage = ({ onLogin }) => {
                       name="password"
                       value={formData.password}
                       onChange={handleChange}
-                      className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 pr-10 bg-white text-gray-900 placeholder-gray-500"
-                      placeholder="Password"
+                      className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 pr-10 bg-white/90 backdrop-blur-sm text-gray-900 placeholder-gray-500"
+                      placeholder="Password (min. 6 characters)"
                       required
                       style={{ fontFamily: 'inherit' }}
                     />
@@ -330,7 +425,7 @@ const LandingPage = ({ onLogin }) => {
                         name="confirmPassword"
                         value={formData.confirmPassword}
                         onChange={handleChange}
-                        className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 bg-white text-gray-900 placeholder-gray-500"
+                        className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 pl-10 bg-white/90 backdrop-blur-sm text-gray-900 placeholder-gray-500"
                         placeholder="Confirm Password"
                         required={!isLogin}
                         style={{ fontFamily: 'inherit' }}
@@ -341,13 +436,13 @@ const LandingPage = ({ onLogin }) => {
 
                   {/* Error/Success Messages */}
                   {error && (
-                    <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 font-light">
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600 font-light">
                       {error}
                     </div>
                   )}
 
                   {success && (
-                    <div className="p-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-600 font-light">
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-600 font-light">
                       {success}
                     </div>
                   )}
@@ -438,19 +533,35 @@ const LandingPage = ({ onLogin }) => {
                   </div>
 
                   {!isLogin && (
-                    <div className="relative">
-                      <input
-                        type="text"
-                        name="full_name"
-                        value={formData.full_name}
-                        onChange={handleChange}
-                        className="w-full px-4 py-3 text-sm border rounded-lg pl-10"
-                        placeholder="Full Name"
-                        required
-                        style={{ fontFamily: 'inherit' }}
-                      />
-                      <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    </div>
+                    <>
+                      <div className="relative">
+                        <input
+                          type="email"
+                          name="email"
+                          value={formData.email}
+                          onChange={handleChange}
+                          className="w-full px-4 py-3 text-sm border rounded-lg pl-10"
+                          placeholder="Email"
+                          required
+                          style={{ fontFamily: 'inherit' }}
+                        />
+                        <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      </div>
+
+                      <div className="relative">
+                        <input
+                          type="text"
+                          name="full_name"
+                          value={formData.full_name}
+                          onChange={handleChange}
+                          className="w-full px-4 py-3 text-sm border rounded-lg pl-10"
+                          placeholder="Full Name"
+                          required
+                          style={{ fontFamily: 'inherit' }}
+                        />
+                        <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      </div>
+                    </>
                   )}
 
                   <div className="relative">
@@ -487,6 +598,18 @@ const LandingPage = ({ onLogin }) => {
                         style={{ fontFamily: 'inherit' }}
                       />
                       <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    </div>
+                  )}
+
+                  {error && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                      {error}
+                    </div>
+                  )}
+
+                  {success && (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-600">
+                      {success}
                     </div>
                   )}
 
