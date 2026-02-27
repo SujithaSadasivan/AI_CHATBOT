@@ -1,5 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
+from datetime import datetime, timedelta
+from typing import List
+
+# Import auth modules
+from app.auth import (
+    authenticate_user, create_access_token, get_password_hash,
+    get_current_active_user, User, UserCreate, UserInDB, Token, UserLogin,
+    users_collection, ACCESS_TOKEN_EXPIRE_MINUTES
+)
+
+# Rest of your existing imports
 from pymongo import MongoClient
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
@@ -11,11 +23,94 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Your Vite frontend URL
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------
+# AUTHENTICATION ENDPOINTS
+# ---------------------------
+
+@app.post("/api/register", response_model=User)
+async def register(user: UserCreate):
+    # Check if user exists
+    existing_user = users_collection.find_one({"username": user.username})
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered"
+        )
+    
+    existing_email = users_collection.find_one({"email": user.email})
+    if existing_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    # Create new user with hashed password
+    hashed_password = get_password_hash(user.password)
+    
+    user_dict = {
+        "username": user.username,
+        "email": user.email,
+        "full_name": user.full_name,
+        "hashed_password": hashed_password,
+        "disabled": False,
+        "created_at": datetime.utcnow()
+    }
+    
+    result = users_collection.insert_one(user_dict)
+    
+    return User(
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name
+    )
+@app.post("/api/login", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/api/login/json")
+async def login_json(user: UserLogin):
+    authenticated_user = authenticate_user(user.username, user.password)
+    if not authenticated_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": authenticated_user.username}, expires_delta=access_token_expires
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "username": authenticated_user.username,
+            "email": authenticated_user.email,
+            "full_name": authenticated_user.full_name
+        }
+    }
+
+@app.get("/api/users/me", response_model=User)
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
+    return current_user
 
 # ---------------------------
 # MODELS
@@ -24,7 +119,7 @@ app.add_middleware(
 # Embedding model
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# LLM model (base is more stable than small)
+# LLM model
 MODEL_NAME = "google/flan-t5-base"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 llm_model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
@@ -45,7 +140,7 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 # ---------------------------
-# ROOT ENDPOINT (to avoid 404)
+# ROOT ENDPOINT
 # ---------------------------
 
 @app.get("/")
@@ -53,37 +148,43 @@ def root():
     return {
         "message": "Steel RAG API is running",
         "endpoints": {
-            "/ask": "GET - Ask a question (use ?question=your question)",
-            "/health": "GET - Check system health"
+            "/ask": "GET - Ask a question",
+            "/health": "GET - Check system health",
+            "/api/register": "POST - Register new user",
+            "/api/login": "POST - Login user (form)",
+            "/api/login/json": "POST - Login user (JSON)",
+            "/api/users/me": "GET - Get current user"
         }
     }
 
 # ---------------------------
-# HEALTH CHECK ENDPOINT
+# HEALTH CHECK
 # ---------------------------
 
 @app.get("/health")
 def health_check():
     try:
-        # Check MongoDB connection
         client.admin.command('ping')
         db_status = "connected"
     except:
         db_status = "disconnected"
     
+    # Check users collection
+    users_count = users_collection.count_documents({})
+    
     return {
         "status": "healthy",
         "database": db_status,
+        "users": users_count,
         "models": "loaded"
     }
 
 # ---------------------------
-# ASK ENDPOINT (REAL RAG)
+# ASK ENDPOINT
 # ---------------------------
 
 @app.get("/ask")
 def ask(question: str):
-
     # 1️⃣ Embed question
     question_embedding = embed_model.encode(question)
 

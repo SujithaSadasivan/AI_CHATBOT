@@ -3,11 +3,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { 
   Send, Bot, User, Loader2, Menu, X, 
-  Wifi, WifiOff, History, PlusCircle 
+  Wifi, WifiOff, History, PlusCircle, 
+  Settings, LogOut, ChevronDown, MoreVertical,
+  Hammer, Factory, Beaker, BarChart3, Cog, CheckCircle
 } from 'lucide-react';
 import axios from 'axios';
 
-const ChatInterface = () => {
+const ChatInterface = ({ user, onLogout }) => {
   const [messages, setMessages] = useState([
     {
       id: 1,
@@ -20,10 +22,24 @@ const ChatInterface = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [backendStatus, setBackendStatus] = useState('checking');
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const userMenuRef = useRef(null);
 
   const API_URL = 'http://127.0.0.1:8000';
+
+  // Add SF Pro Display font
+  useEffect(() => {
+    const link = document.createElement('link');
+    link.href = 'https://fonts.cdnfonts.com/css/sf-pro-display';
+    link.rel = 'stylesheet';
+    document.head.appendChild(link);
+
+    return () => {
+      document.head.removeChild(link);
+    };
+  }, []);
 
   useEffect(() => {
     checkBackendConnection();
@@ -32,6 +48,17 @@ const ChatInterface = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const checkBackendConnection = async () => {
     try {
@@ -92,82 +119,179 @@ const ChatInterface = () => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const suggestions = [
-    { icon: '🔧', text: 'Stainless steel properties' },
-    { icon: '🏭', text: 'Hot rolling process' },
-    { icon: '🔬', text: 'Heat treatment' },
-    { icon: '📊', text: 'Steel grades comparison' }
+  const formatDate = (date) => {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (date.toDateString() === today.toDateString()) {
+      return 'Today';
+    } else if (date.toDateString() === yesterday.toDateString()) {
+      return 'Yesterday';
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+  };
+
+  // Main page centered content items - Vertical list with SVG icons
+  const exploreTopics = [
+    { icon: Hammer, text: 'Stainless steel properties' },
+    { icon: BarChart3, text: 'Steel grades comparison' },
+    { icon: Cog, text: 'Manufacturing techniques' },
+    { icon: CheckCircle, text: 'Quality standards' },
   ];
 
-  const recentChats = [
-    { id: 1, title: 'Steel Properties', time: '2h ago' },
-    { id: 2, title: 'Manufacturing', time: '1d ago' },
-    { id: 3, title: 'Quality Standards', time: '2d ago' },
+  // Mock chat history with dates
+  const chatHistory = [
+    { id: 1, title: 'Steel properties discussion', date: new Date() },
+    { id: 2, title: 'Manufacturing processes', date: new Date() },
+    { id: 3, title: 'Heat treatment specs', date: new Date(new Date().setDate(new Date().getDate() - 1)) },
+    { id: 4, title: 'Quality standards', date: new Date(new Date().setDate(new Date().getDate() - 1)) },
+    { id: 5, title: 'Stainless steel grades', date: new Date(new Date().setDate(new Date().getDate() - 3)) },
+    { id: 6, title: 'Rolling process', date: new Date(new Date().setDate(new Date().getDate() - 5)) },
+    { id: 7, title: 'Material properties', date: new Date(new Date().setDate(new Date().getDate() - 8)) },
+    { id: 8, title: 'Testing methods', date: new Date(new Date().setDate(new Date().getDate() - 10)) },
   ];
+
+  // Group chats by date
+  const groupedChats = chatHistory.reduce((groups, chat) => {
+    const dateKey = formatDate(chat.date);
+    if (!groups[dateKey]) {
+      groups[dateKey] = [];
+    }
+    groups[dateKey].push(chat);
+    return groups;
+  }, {});
+
+  // Get user initials for avatar
+  const getUserInitials = () => {
+    if (user?.full_name) {
+      return user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+    }
+    if (user?.email) {
+      return user.email[0].toUpperCase();
+    }
+    return 'U';
+  };
+
+  // Check if there are any messages beyond the welcome message
+  const hasUserMessages = messages.length > 1;
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      {/* Sidebar */}
+    <div 
+      className="flex h-screen bg-gray-100"
+      style={{ fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif" }}
+    >
+      {/* Sidebar - Medium Gray theme */}
       <div className={`
         fixed inset-y-0 left-0 transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         md:relative md:translate-x-0 transition duration-200 ease-in-out
-        z-30 w-72 bg-white border-r border-gray-200 shadow-lg
+        z-30 w-72 bg-gray-200 shadow-xl
       `}>
         <div className="flex flex-col h-full">
-          {/* Header */}
-          <div className="p-5 border-b border-gray-200">
-            <div className="flex items-center space-x-3">
-              <div className="bg-blue-600 p-2 rounded-lg">
-                <Bot className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <h1 className="text-lg font-semibold text-gray-800">Steel RAG</h1>
-                <p className="text-xs text-gray-500">Intelligent Assistant</p>
-              </div>
-            </div>
+          {/* Header - ANY CHAT centered */}
+          <div className="py-5 px-4 text-center">
+            <h1 className="text-xl font-bold text-gray-900">ANY CHAT</h1>
           </div>
 
-          {/* New Chat Button */}
-          <div className="p-4">
+          {/* New Chat Button - Dark grey with white font */}
+          <div className="px-4 pb-4">
             <button 
               onClick={() => setMessages([messages[0]])}
-              className="w-full flex items-center space-x-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition"
+              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition shadow-md"
             >
               <PlusCircle className="h-4 w-4" />
               <span className="text-sm font-medium">New Chat</span>
             </button>
           </div>
 
-          {/* Recent Chats */}
-          <div className="flex-1 px-4">
-            <div className="flex items-center space-x-2 mb-3">
-              <History className="h-4 w-4 text-gray-400" />
-              <h2 className="text-xs font-medium text-gray-400 uppercase">Recent</h2>
-            </div>
-            <div className="space-y-1">
-              {recentChats.map((chat) => (
-                <button
-                  key={chat.id}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 transition"
-                >
-                  <p className="text-sm font-medium text-gray-700">{chat.title}</p>
-                  <p className="text-xs text-gray-400">{chat.time}</p>
-                </button>
-              ))}
-            </div>
+          {/* Chat History with Date Groups - Hide scrollbar */}
+          <div className="flex-1 px-4 overflow-y-auto scrollbar-hide">
+            {Object.entries(groupedChats).map(([dateGroup, chats]) => (
+              <div key={dateGroup} className="mb-4">
+                <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                  {dateGroup}
+                </h2>
+                <div className="space-y-1">
+                  {chats.map((chat) => (
+                    <button
+                      key={chat.id}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-300 transition group"
+                    >
+                      <p className="text-sm font-medium text-gray-800 group-hover:text-gray-900 truncate">
+                        {chat.title}
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        {chat.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
-          {/* Status */}
-          <div className="p-4 border-t border-gray-200">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-500">System Status</span>
-              <div className="flex items-center space-x-2">
-                <div className={`w-2 h-2 rounded-full ${
-                  backendStatus === 'online' ? 'bg-green-500' : 'bg-red-500'
-                }`} />
-                <span className="text-xs text-gray-600">
-                  {backendStatus === 'online' ? 'Connected' : 'Offline'}
-                </span>
+          {/* User Profile with Three Dots Menu - White container with gray-700 background */}
+          <div className="p-4" ref={userMenuRef}>
+            <div className="bg-white rounded-lg p-3 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center">
+                    <span className="text-sm font-semibold text-white">
+                      {getUserInitials()}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {user?.full_name || 'User'}
+                    </p>
+                    <p className="text-xs text-gray-600 truncate max-w-[120px]">
+                      {user?.email}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="relative">
+                  <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition"
+                  >
+                    <MoreVertical className="h-5 w-5 text-gray-700" />
+                  </button>
+
+                  {/* Dropdown Menu */}
+                  {showUserMenu && (
+                    <div className="absolute bottom-full right-0 mb-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-2 z-50 animate-fade-in">
+                      <div className="px-4 py-2 border-b border-gray-100">
+                        <p className="text-xs text-gray-500">Signed in as</p>
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {user?.email}
+                        </p>
+                      </div>
+                      
+                      <div className="py-1">
+                        <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2">
+                          <User className="w-4 h-4" />
+                          <span>Profile</span>
+                        </button>
+                        <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2">
+                          <Settings className="w-4 h-4" />
+                          <span>Settings</span>
+                        </button>
+                      </div>
+                      
+                      <div className="border-t border-gray-100 pt-1">
+                        <button
+                          onClick={onLogout}
+                          className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          <span>Sign Out</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -175,89 +299,88 @@ const ChatInterface = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col h-full bg-gray-100">
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition"
-            >
-              <Menu className="h-5 w-5 text-gray-600" />
-            </button>
-            
-            <div className="flex items-center space-x-3">
-              <div className={`w-2 h-2 rounded-full ${
-                backendStatus === 'online' ? 'bg-green-500' : 'bg-red-500'
-              }`} />
-              <span className="text-sm text-gray-600">
-                {backendStatus === 'online' ? 'Connected to database' : 'Disconnected'}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
-              <User className="h-4 w-4 text-gray-600" />
-            </div>
-          </div>
-        </header>
+      <div className="flex-1 flex flex-col h-full bg-gray-50">
+        {/* Mobile Menu Button - Only shown when sidebar is closed on mobile */}
+        {!sidebarOpen && (
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden fixed top-4 left-4 z-10 p-2 bg-white rounded-lg shadow-lg border border-gray-200"
+          >
+            <Menu className="h-5 w-5 text-gray-600" />
+          </button>
+        )}
 
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`flex max-w-[75%] space-x-3 ${message.type === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                {/* Avatar */}
-                <div className={`
-                  flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center
-                  ${message.type === 'user' ? 'bg-blue-100' : 'bg-gray-200'}
-                `}>
-                  {message.type === 'user' ? (
-                    <User className="h-4 w-4 text-blue-600" />
-                  ) : (
-                    <Bot className="h-4 w-4 text-gray-600" />
+        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4 scrollbar-hide">
+          {hasUserMessages ? (
+            // Show messages after the welcome message
+            messages.slice(1).map((message) => (
+              <div
+                key={message.id}
+                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className={`flex max-w-[75%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} space-x-3`}>
+                  {/* Avatar - Only show for user messages */}
+                  {message.type === 'user' && (
+                    <div className="flex-shrink-0 w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center shadow-sm">
+                      <span className="text-sm font-semibold text-white">
+                        {getUserInitials()}
+                      </span>
+                    </div>
                   )}
-                </div>
-                
-                {/* Message Content */}
-                <div>
-                  <div className={`
-                    rounded-2xl px-4 py-3
-                    ${message.type === 'user' 
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-white border border-gray-200 text-gray-800 shadow-sm'}
-                  `}>
-                    {message.type === 'bot' ? (
-                      <ReactMarkdown 
-                        className="prose prose-sm max-w-none prose-p:text-gray-700 prose-p:leading-relaxed"
-                      >
-                        {message.content}
-                      </ReactMarkdown>
-                    ) : (
-                      <p className="text-sm text-white">{message.content}</p>
-                    )}
+                  
+                  {/* Message Content */}
+                  <div>
+                    <div className={`
+                      ${message.type === 'user' 
+                        ? 'bg-gray-700 text-white rounded-2xl px-4 py-3 shadow-sm' 
+                        : 'text-gray-800'} // Bot messages have no background or border
+                    `}>
+                      {message.type === 'bot' ? (
+                        <ReactMarkdown 
+                          className="prose prose-sm max-w-none prose-p:text-gray-700 prose-p:leading-relaxed"
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      ) : (
+                        <p className="text-sm text-white">{message.content}</p>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1 ml-1">
+                      {formatTime(message.timestamp)}
+                    </p>
                   </div>
-                  <p className="text-xs text-gray-400 mt-1 ml-1">
-                    {formatTime(message.timestamp)}
-                  </p>
                 </div>
               </div>
+            ))
+          ) : (
+            // Centered content when no user messages - Vertical list with heading
+            <div className="h-full flex flex-col items-center justify-center -mt-16">
+              <h2 className="text-3xl font-bold text-gray-800 mb-8">ASK ANYTHING YOU WANT!</h2>
+              <div className="w-full max-w-md space-y-3">
+                {exploreTopics.map((topic, index) => {
+                  const IconComponent = topic.icon;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => setInputMessage(topic.text)}
+                      className="w-full flex items-center space-x-4 px-5 py-4 bg-white border-2 border-transparent rounded-xl text-gray-900 font-medium hover:border-black transition-all duration-200 shadow-sm hover:shadow-md"
+                    >
+                      <IconComponent className="h-5 w-5 text-gray-700" />
+                      <span className="text-base">{topic.text}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          ))}
+          )}
 
           {isLoading && (
             <div className="flex justify-start">
               <div className="flex space-x-3">
-                <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
-                  <Bot className="h-4 w-4 text-gray-600" />
-                </div>
-                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
+                <div className="text-gray-800">
                   <div className="flex items-center space-x-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                    <Loader2 className="h-4 w-4 animate-spin text-gray-700" />
                     <span className="text-sm text-gray-600">Analyzing documents...</span>
                   </div>
                 </div>
@@ -268,27 +391,8 @@ const ChatInterface = () => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Suggestions */}
-        {messages.length === 1 && backendStatus === 'online' && (
-          <div className="px-6 pb-4">
-            <p className="text-xs text-gray-400 mb-2">Suggestions</p>
-            <div className="flex flex-wrap gap-2">
-              {suggestions.map((suggestion, index) => (
-                <button
-                  key={index}
-                  onClick={() => setInputMessage(suggestion.text)}
-                  className="flex items-center space-x-2 px-3 py-1.5 bg-white border border-gray-200 rounded-full text-sm text-gray-600 hover:border-blue-500 hover:text-blue-600 transition shadow-sm"
-                >
-                  <span>{suggestion.icon}</span>
-                  <span>{suggestion.text}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Input Area */}
-        <div className="border-t border-gray-200 bg-white px-6 py-4">
+        {/* Input Area - Removed border and adjusted styling */}
+        <div className="bg-white px-6 py-4 shadow-sm">
           <form onSubmit={handleSendMessage} className="flex space-x-3">
             <input
               ref={inputRef}
@@ -296,25 +400,24 @@ const ChatInterface = () => {
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               placeholder="Ask about steel documents..."
-              className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-700 focus:border-transparent text-sm"
               disabled={isLoading || backendStatus !== 'online'}
             />
             <button
               type="submit"
               disabled={isLoading || !inputMessage.trim() || backendStatus !== 'online'}
               className={`
-                px-5 py-2.5 rounded-lg flex items-center space-x-2 text-sm font-medium
+                px-5 py-3 rounded-lg flex items-center justify-center
                 ${isLoading || !inputMessage.trim() || backendStatus !== 'online'
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm'}
+                  : 'bg-gray-700 text-white hover:bg-gray-800 transition shadow-md'}
               `}
             >
-              <span>Send</span>
               <Send className="h-4 w-4" />
             </button>
           </form>
           <p className="text-xs text-gray-400 mt-2 text-center">
-            Responses are generated from your document database
+            AI-generated responses may contain inaccuracies
           </p>
         </div>
       </div>
@@ -322,7 +425,7 @@ const ChatInterface = () => {
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-30 z-20 md:hidden"
+          className="fixed inset-0 bg-black bg-opacity-50 z-20 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
