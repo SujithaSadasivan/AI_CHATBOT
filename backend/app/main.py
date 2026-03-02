@@ -343,7 +343,7 @@ async def create_chat_message(message_data: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 # ---------------------------
-# ASK ENDPOINT (Updated with chat support)
+# ASK ENDPOINT (FINAL FIXED VERSION - EXACT ANSWERS FROM PDF)
 # ---------------------------
 
 @app.get("/ask")
@@ -359,8 +359,6 @@ def ask(question: str, chat_id: Optional[str] = None):
 
         if not docs:
             answer = "No documents found in database."
-            
-            # Save bot response if chat_id provided
             if chat_id:
                 bot_message = {
                     "chat_id": chat_id,
@@ -369,72 +367,98 @@ def ask(question: str, chat_id: Optional[str] = None):
                     "timestamp": datetime.utcnow()
                 }
                 chat_messages_collection.insert_one(bot_message)
-                
-                # Update chat session timestamp
                 chat_sessions_collection.update_one(
                     {"_id": ObjectId(chat_id)},
                     {"$set": {"updated_at": datetime.utcnow()}}
                 )
-            
             return {"answer": answer}
 
-        # 3️⃣ Score similarity
+        # 3️⃣ Score similarity with SEMANTIC MATCHING
         scored_chunks = []
+        question_lower = question.lower()
+        
+        # Extract core keywords from question
+        core_keywords = []
+        if "steel detailing" in question_lower:
+            core_keywords = ["steel detailing", "introduction to steel detailing"]
+        elif "bolt" in question_lower or "connection" in question_lower:
+            core_keywords = ["bolt", "connection", "details"]
+        elif "types" in question_lower or "drawings" in question_lower:
+            core_keywords = ["types", "drawings"]
+        elif "reading" in question_lower or "structural" in question_lower:
+            core_keywords = ["reading", "structural", "drawings"]
+        elif "fabrication" in question_lower:
+            core_keywords = ["fabrication", "process"]
+        elif "erection" in question_lower:
+            core_keywords = ["erection", "process"]
+        elif "members" in question_lower:
+            core_keywords = ["members", "structural"]
+        elif "quality" in question_lower:
+            core_keywords = ["quality", "checks"]
 
         for doc in docs:
             chunk_embedding = np.array(doc["embedding"])
-            score = cosine_similarity(question_embedding, chunk_embedding)
-            scored_chunks.append((score, doc["text"]))
+            base_score = cosine_similarity(question_embedding, chunk_embedding)
+            
+            # TITLE MATCHING BONUS - This solves "Introduction to" vs "what is" problem
+            text_lower = doc["text"].lower()
+            title_bonus = 0.0
+            
+            # Check if chunk contains exact title match or introduction
+            if any(keyword in text_lower for keyword in core_keywords):
+                title_bonus = 0.3
+            
+            # Extra bonus for chunks that start with numbered sections (like "1. Introduction")
+            if re.match(r'^\d+\.', doc["text"].strip()):
+                title_bonus += 0.1
+            
+            final_score = base_score + title_bonus
+            scored_chunks.append((final_score, doc["text"], base_score, title_bonus))
 
-        # 4️⃣ Get Top 3
-        top_candidates = sorted(scored_chunks, key=lambda x: x[0], reverse=True)[:3]
+        # 4️⃣ Sort all chunks by final score
+        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+        
+        # 5️⃣ DEBUG: Print scores
+        print("\n" + "="*70)
+        print(f"🔍 QUESTION: '{question}'")
+        print("="*70)
+        
+        for i, (final_score, text, base_score, bonus) in enumerate(scored_chunks[:5]):
+            preview = text[:150].replace('\n', ' ') + "..."
+            print(f"\n{i+1}. FINAL SCORE: {final_score:.4f} (base: {base_score:.4f} + bonus: {bonus:.2f})")
+            print(f"   PREVIEW: {preview}")
+        print("="*70)
 
-        # 5️⃣ Keyword re-ranking
-        question_keywords = question.lower().split()
+        # 6️⃣ Select the best chunk
+        best_final_score, best_text, best_base_score, best_bonus = scored_chunks[0]
+        
+        # If top chunk has low score but second chunk has good keywords, check second
+        if best_final_score < 0.5 and len(scored_chunks) > 1:
+            second_score, second_text, second_base, second_bonus = scored_chunks[1]
+            if second_bonus > best_bonus:
+                best_text = second_text
+                print(f"   📌 Using second chunk instead (better keyword match)")
 
-        best_chunk = None
-        best_score = -1
+        # Clean the text
+        best_text = re.sub(r"\s+", " ", best_text).strip()
 
-        for score, text in top_candidates:
-            text_lower = text.lower()
-            keyword_score = sum(1 for word in question_keywords if word in text_lower)
-            combined_score = score + (0.05 * keyword_score)
+        # 7️⃣ Return the ENTIRE CHUNK for comprehensive answers
+        # This ensures ALL points are returned, not just one sentence
+        
+        # Check if the chunk has multiple points (bullet points, numbered lists)
+        if "•" in best_text or "- " in best_text or re.search(r'\d+\.', best_text):
+            # Keep the formatting for lists
+            answer = best_text
+        else:
+            # For paragraphs, return the whole thing
+            answer = best_text
 
-            if combined_score > best_score:
-                best_score = combined_score
-                best_chunk = text
+        # 8️⃣ Clean up
+        answer = answer.strip()
+        if answer.lower().startswith("answer:"):
+            answer = answer[7:].strip()
 
-        context = re.sub(r"\s+", " ", best_chunk).strip()
-
-        # 6️⃣ Strict Prompt
-        prompt = f"""
-You are a strict technical extractor.
-
-From the context below, extract ONLY the exact answer to the question.
-Do NOT explain.
-Do NOT add extra information.
-If not found, return: Answer not found in the document.
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:
-"""
-
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
-
-        outputs = llm_model.generate(
-            **inputs,
-            max_new_tokens=120,
-            do_sample=False
-        )
-
-        answer = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-
-        # 7️⃣ Save bot response if chat_id provided
+        # 9️⃣ Save response
         if chat_id:
             bot_message = {
                 "chat_id": chat_id,
@@ -443,25 +467,24 @@ Answer:
                 "timestamp": datetime.utcnow()
             }
             chat_messages_collection.insert_one(bot_message)
-            
-            # Update chat session timestamp
             chat_sessions_collection.update_one(
                 {"_id": ObjectId(chat_id)},
                 {"$set": {"updated_at": datetime.utcnow()}}
             )
-            print(f"Bot response saved for chat: {chat_id}")
+            print(f"✅ Answer length: {len(answer)} chars")
+            print(f"✅ Answer preview: {answer[:100]}...")
 
         return {"answer": answer}
         
     except Exception as e:
-        print(f"Error in ask endpoint: {str(e)}")
+        print(f"❌ Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ---------------------------
 # INCLUDE ADMIN ROUTER
 # ---------------------------
 
-app.include_router(admin.router)  # Remove the prefix parameter
+app.include_router(admin.router)
 
 # ---------------------------
 # ROOT ENDPOINT

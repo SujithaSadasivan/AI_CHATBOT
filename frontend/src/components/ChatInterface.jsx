@@ -581,7 +581,7 @@ const ChatInterface = ({ user, onLogout }) => {
                 <div className="text-gray-800">
                   <div className="flex items-center space-x-2">
                     <Loader2 className="h-4 w-4 animate-spin text-gray-700" />
-                    <span className="text-sm text-gray-600">Analyzing documents...</span>
+                    <span className="text-sm text-gray-600">Analyzing...</span>
                   </div>
                 </div>
               </div>
