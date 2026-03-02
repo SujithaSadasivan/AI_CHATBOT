@@ -76,6 +76,157 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 # ---------------------------
+# HELPER FUNCTION FOR BULLET POINTS
+# ---------------------------
+
+def format_as_bullet_points(text: str, question: str = "") -> str:
+    """
+    Convert plain text into proper bullet point format with sub-heading
+    Format: 
+    Sub-heading (derived from question)
+    • Point 1
+    • Point 2
+    • Point 3
+    """
+    if not text:
+        return text
+    
+    # Clean the text
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Generate sub-heading from question
+    sub_heading = ""
+    question_lower = question.lower()
+    
+    if "types of drawings" in question_lower or "types of drawing" in question_lower:
+        sub_heading = "Types of Drawings"
+    elif "detailing standards" in question_lower or "standards and codes" in question_lower or "codes" in question_lower:
+        sub_heading = "Detailing Standards & Codes"
+    elif "erection process" in question_lower or "erection" in question_lower:
+        sub_heading = "Erection Process"
+    elif "steel detailing" in question_lower and ("what is" in question_lower or "define" in question_lower):
+        sub_heading = "Introduction to Steel Detailing"
+    elif "structural members" in question_lower or "common members" in question_lower or "members" in question_lower:
+        sub_heading = "Common Structural Members"
+    elif "edge distance" in question_lower or "minimum edge" in question_lower or "pitch distance" in question_lower:
+        sub_heading = "Minimum Edge Distance"
+    elif "welding" in question_lower or "weld" in question_lower or "welding essentials" in question_lower:
+        sub_heading = "Welding Essentials"
+    elif "reading" in question_lower and "drawings" in question_lower:
+        sub_heading = "Reading Structural Drawings"
+    elif "quality" in question_lower and ("checks" in question_lower or "check" in question_lower):
+        sub_heading = "Quality Checks in Detailing"
+    elif "fabrication" in question_lower:
+        sub_heading = "Fabrication Process"
+    elif "bolt" in question_lower or "connection" in question_lower:
+        sub_heading = "Bolts & Connections"
+    else:
+        # Extract first few words from question as sub-heading (capitalized)
+        words = question.split()[:4]
+        sub_heading = ' '.join(words).title()
+        if len(sub_heading) > 30:
+            sub_heading = sub_heading[:30] + "..."
+    
+    # Extract bullet points from text
+    bullet_points = []
+    
+    # Special handling for "Types of Drawings"
+    if "General Arrangement" in text or "GA Drawings" in text or "Shop Drawings" in text or "Erection Drawings" in text:
+        if "General Arrangement" in text:
+            ga_match = re.search(r'General Arrangement[^.]*', text)
+            if ga_match:
+                bullet_points.append(f"• {ga_match.group(0)}")
+        if "Shop Drawings" in text:
+            shop_match = re.search(r'Shop Drawings[^.]*', text)
+            if shop_match:
+                bullet_points.append(f"• {shop_match.group(0)}")
+        if "Erection Drawings" in text:
+            erec_match = re.search(r'Erection Drawings[^.]*', text)
+            if erec_match:
+                bullet_points.append(f"• {erec_match.group(0)}")
+    
+    # Special handling for "Detailing Standards & Codes"
+    elif "AISC" in text or "IS 800" in text or "AWS" in text or "OSHA" in text:
+        if "AISC" in text:
+            bullet_points.append("• AISC – American Institute of Steel Construction")
+        if "IS 800" in text:
+            bullet_points.append("• IS 800 – Indian Standard for Steel Structures")
+        if "AWS" in text:
+            bullet_points.append("• AWS – Welding standards")
+        if "OSHA" in text:
+            bullet_points.append("• OSHA – Safety regulations during erection")
+    
+    # Special handling for "Common Structural Members"
+    elif "Beams" in text or "Columns" in text or "Bracings" in text or "Base Plates" in text:
+        sentences = text.split('.')
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if sentence and len(sentence) > 5:
+                if "Beams" in sentence:
+                    bullet_points.append(f"• {sentence}")
+                elif "Columns" in sentence:
+                    bullet_points.append(f"• {sentence}")
+                elif "Bracings" in sentence or "Bracing" in sentence:
+                    bullet_points.append(f"• {sentence}")
+                elif "Base Plates" in sentence or "Base Plate" in sentence:
+                    bullet_points.append(f"• {sentence}")
+    
+    # Special handling for "Minimum Edge Distance" and "Welding Essentials"
+    elif "edge distance" in text.lower() or "pitch distance" in text.lower() or "fillet weld" in text.lower() or "groove weld" in text.lower():
+        # Split by common patterns
+        parts = re.split(r'(?<=[.!?])\s+', text)
+        for part in parts:
+            part = part.strip()
+            if part and len(part) > 5:
+                # Remove leading numbers like "1.", "8.", etc.
+                part = re.sub(r'^\d+\.\s*', '', part)
+                bullet_points.append(f"• {part}")
+    
+    # Special handling for "Reading Structural Drawings" and "Quality Checks"
+    elif "grid lines" in text.lower() or "verify" in text.lower() or "check" in text.lower() or "ensure" in text.lower():
+        sentences = text.split('.')
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if sentence and len(sentence) > 10:
+                bullet_points.append(f"• {sentence}")
+    
+    # Default handling - split by sentences and clean
+    else:
+        # First try to split by common patterns
+        if "•" in text:
+            # Already has bullets, just clean them
+            lines = text.split('•')
+            for line in lines:
+                line = line.strip()
+                if line and len(line) > 3:
+                    bullet_points.append(f"• {line}")
+        else:
+            # Split by sentences
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if sentence and len(sentence) > 10:
+                    # Remove any leading numbers like "1.", "8.", etc.
+                    sentence = re.sub(r'^\d+\.\s*', '', sentence)
+                    bullet_points.append(f"• {sentence}")
+    
+    # Remove duplicates
+    seen = set()
+    unique_bullets = []
+    for bullet in bullet_points:
+        if bullet not in seen:
+            seen.add(bullet)
+            unique_bullets.append(bullet)
+    
+    # Combine sub-heading and bullet points
+    if unique_bullets:
+        result = f"{sub_heading}\n" + '\n'.join(unique_bullets)
+        return result
+    else:
+        # If no bullet points found, return as is
+        return text
+
+# ---------------------------
 # AUTHENTICATION ENDPOINTS
 # ---------------------------
 
@@ -343,7 +494,7 @@ async def create_chat_message(message_data: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 # ---------------------------
-# ASK ENDPOINT (FINAL FIXED VERSION - EXACT ANSWERS FROM PDF)
+# ASK ENDPOINT (FIXED WITH PROPER BULLET POINT FORMATTING)
 # ---------------------------
 
 @app.get("/ask")
@@ -400,7 +551,7 @@ def ask(question: str, chat_id: Optional[str] = None):
             chunk_embedding = np.array(doc["embedding"])
             base_score = cosine_similarity(question_embedding, chunk_embedding)
             
-            # TITLE MATCHING BONUS - This solves "Introduction to" vs "what is" problem
+            # TITLE MATCHING BONUS
             text_lower = doc["text"].lower()
             title_bonus = 0.0
             
@@ -408,7 +559,7 @@ def ask(question: str, chat_id: Optional[str] = None):
             if any(keyword in text_lower for keyword in core_keywords):
                 title_bonus = 0.3
             
-            # Extra bonus for chunks that start with numbered sections (like "1. Introduction")
+            # Extra bonus for chunks that start with numbered sections
             if re.match(r'^\d+\.', doc["text"].strip()):
                 title_bonus += 0.1
             
@@ -442,16 +593,8 @@ def ask(question: str, chat_id: Optional[str] = None):
         # Clean the text
         best_text = re.sub(r"\s+", " ", best_text).strip()
 
-        # 7️⃣ Return the ENTIRE CHUNK for comprehensive answers
-        # This ensures ALL points are returned, not just one sentence
-        
-        # Check if the chunk has multiple points (bullet points, numbered lists)
-        if "•" in best_text or "- " in best_text or re.search(r'\d+\.', best_text):
-            # Keep the formatting for lists
-            answer = best_text
-        else:
-            # For paragraphs, return the whole thing
-            answer = best_text
+        # 7️⃣ Format as bullet points with sub-heading (pass the question)
+        answer = format_as_bullet_points(best_text, question)
 
         # 8️⃣ Clean up
         answer = answer.strip()
@@ -472,7 +615,7 @@ def ask(question: str, chat_id: Optional[str] = None):
                 {"$set": {"updated_at": datetime.utcnow()}}
             )
             print(f"✅ Answer length: {len(answer)} chars")
-            print(f"✅ Answer preview: {answer[:100]}...")
+            print(f"✅ Answer preview: {answer[:200]}...")
 
         return {"answer": answer}
         

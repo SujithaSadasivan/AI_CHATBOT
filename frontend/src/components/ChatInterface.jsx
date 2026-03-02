@@ -50,7 +50,7 @@ const ChatInterface = ({ user, onLogout }) => {
 
   useEffect(() => {
     if (user) {
-      console.log('User object in ChatInterface:', user); // Debug log
+      console.log('User object in ChatInterface:', user);
       fetchChatSessions();
     }
   }, [user]);
@@ -86,16 +86,12 @@ const ChatInterface = ({ user, onLogout }) => {
         return;
       }
       
-      console.log('Fetching sessions for user ID:', user.id);
-      
       const response = await axios.get(`${API_URL}/chat/sessions`, {
         params: { user_id: user.id }
       });
       
-      console.log('Chat sessions response:', response.data);
       setChatSessions(response.data || []);
       
-      // Load messages for each session
       if (response.data && response.data.length > 0) {
         response.data.forEach(session => {
           fetchChatMessages(session._id || session.id);
@@ -128,20 +124,15 @@ const ChatInterface = ({ user, onLogout }) => {
         return;
       }
       
-      console.log('Creating new chat for user ID:', user.id);
-      
       const response = await axios.post(`${API_URL}/chat/create`, {
         user_id: user.id,
         title: 'New Chat'
       });
       
-      console.log('Create chat response:', response.data);
-      
       const newChat = response.data;
       setChatSessions(prev => [newChat, ...prev]);
       setCurrentChatId(newChat._id || newChat.id);
       
-      // Reset messages to welcome message for new chat
       setMessages([{
         id: 1,
         type: 'bot',
@@ -150,26 +141,18 @@ const ChatInterface = ({ user, onLogout }) => {
       }]);
     } catch (error) {
       console.error('Error creating new chat:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        alert(`Failed to create chat: ${error.response.data.detail || 'Unknown error'}`);
-      } else {
-        alert('Failed to create new chat. Please try again.');
-      }
     }
   };
 
   const loadChat = async (chatId) => {
     setCurrentChatId(chatId);
     
-    // Load messages from this chat
     if (chatMessages[chatId]) {
       setMessages(chatMessages[chatId]);
     } else {
       await fetchChatMessages(chatId);
     }
     
-    // Close sidebar on mobile
     if (window.innerWidth < 768) {
       setSidebarOpen(false);
     }
@@ -188,14 +171,12 @@ const ChatInterface = ({ user, onLogout }) => {
 
   const updateChatTitle = async (chatId, firstUserMessage) => {
     try {
-      // Generate a title from the first user message (first few words)
       const title = firstUserMessage.split(' ').slice(0, 5).join(' ') + '...';
       
       await axios.put(`${API_URL}/chat/${chatId}`, {
         title: title
       });
       
-      // Update chat sessions list
       setChatSessions(prev => 
         prev.map(chat => 
           (chat._id === chatId || chat.id === chatId) ? { ...chat, title: title } : chat
@@ -214,7 +195,6 @@ const ChatInterface = ({ user, onLogout }) => {
     e.preventDefault();
     if (!inputMessage.trim() || isLoading || backendStatus !== 'online') return;
 
-    // Create new chat if none exists
     let chatId = currentChatId;
     if (!chatId) {
       try {
@@ -224,25 +204,16 @@ const ChatInterface = ({ user, onLogout }) => {
           return;
         }
         
-        console.log('Creating new chat for message with user ID:', user.id);
-        
         const response = await axios.post(`${API_URL}/chat/create`, {
           user_id: user.id,
           title: 'New Chat'
         });
-        
-        console.log('Create chat response:', response.data);
         
         chatId = response.data._id || response.data.id;
         setCurrentChatId(chatId);
         setChatSessions(prev => [response.data, ...prev]);
       } catch (error) {
         console.error('Error creating chat:', error);
-        if (error.response) {
-          alert(`Failed to create chat: ${error.response.data.detail || 'Unknown error'}`);
-        } else {
-          alert('Failed to create chat. Please try again.');
-        }
         return;
       }
     }
@@ -255,30 +226,26 @@ const ChatInterface = ({ user, onLogout }) => {
       chat_id: chatId
     };
 
-    // Check if this is the first user message to update chat title
     const isFirstUserMessage = messages.filter(m => m.type === 'user').length === 0;
 
     setMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsLoading(true);
 
-    // Save user message to database
     await saveMessage(chatId, {
       type: 'user',
       content: inputMessage
     });
 
-    // Update chat title if this is the first user message
     if (isFirstUserMessage) {
       await updateChatTitle(chatId, inputMessage);
     }
 
     try {
-      // Include chat_id in the ask request to save bot response automatically
       const response = await axios.get(`${API_URL}/ask`, {
         params: { 
           question: inputMessage,
-          chat_id: chatId  // Send chat_id to backend
+          chat_id: chatId
         },
         timeout: 30000
       });
@@ -293,7 +260,6 @@ const ChatInterface = ({ user, onLogout }) => {
 
       setMessages(prev => [...prev, botMessage]);
 
-      // Update messages in chatMessages state
       setChatMessages(prev => ({
         ...prev,
         [chatId]: [...(prev[chatId] || []), userMessage, botMessage]
@@ -312,7 +278,6 @@ const ChatInterface = ({ user, onLogout }) => {
       
       setMessages(prev => [...prev, errorMessage]);
       
-      // Save error message to database
       await saveMessage(chatId, {
         type: 'bot',
         content: errorMessage.content
@@ -343,7 +308,6 @@ const ChatInterface = ({ user, onLogout }) => {
     }
   };
 
-  // Group chats by date
   const groupedChats = chatSessions.reduce((groups, chat) => {
     const dateKey = formatDate(chat.created_at || chat.timestamp || new Date());
     if (!groups[dateKey]) {
@@ -353,7 +317,6 @@ const ChatInterface = ({ user, onLogout }) => {
     return groups;
   }, {});
 
-  // Main page centered content items - Vertical list with SVG icons
   const exploreTopics = [
     { icon: Hammer, text: 'Stainless steel properties' },
     { icon: BarChart3, text: 'Steel grades comparison' },
@@ -361,7 +324,6 @@ const ChatInterface = ({ user, onLogout }) => {
     { icon: CheckCircle, text: 'Quality standards' },
   ];
 
-  // Get user initials for avatar
   const getUserInitials = () => {
     if (user?.full_name) {
       return user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
@@ -372,27 +334,66 @@ const ChatInterface = ({ user, onLogout }) => {
     return 'U';
   };
 
-  // Check if there are any user messages
   const hasUserMessages = messages.some(m => m.type === 'user');
+
+  // Custom component to render bot messages with proper format
+  const renderBotMessage = (content) => {
+    // Split by newlines
+    const lines = content.split('\n');
+    
+    return lines.map((line, index) => {
+      const trimmedLine = line.trim();
+      
+      // First line is the sub-heading (bold)
+      if (index === 0 && trimmedLine && !trimmedLine.startsWith('•')) {
+        return (
+          <p key={index} className="text-gray-800 font-bold text-base mb-3 mt-1">
+            {trimmedLine}
+          </p>
+        );
+      }
+      // Bullet points
+      else if (trimmedLine.startsWith('•')) {
+        return (
+          <div key={index} className="flex items-start ml-2 mb-2">
+            <span className="mr-2 text-gray-700 font-bold">•</span>
+            <span className="text-gray-700 flex-1 leading-relaxed">
+              {trimmedLine.substring(1).trim()}
+            </span>
+          </div>
+        );
+      }
+      // Empty line
+      else if (trimmedLine === '') {
+        return <div key={index} className="h-1" />;
+      }
+      // Regular text (fallback)
+      else {
+        return (
+          <p key={index} className="text-gray-700 mb-2 leading-relaxed">
+            {trimmedLine}
+          </p>
+        );
+      }
+    });
+  };
 
   return (
     <div 
       className="flex h-screen bg-gray-100"
       style={{ fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif" }}
     >
-      {/* Sidebar - Medium Gray theme */}
+      {/* Sidebar */}
       <div className={`
         fixed inset-y-0 left-0 transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         md:relative md:translate-x-0 transition duration-200 ease-in-out
         z-30 w-72 bg-gray-200 shadow-xl
       `}>
         <div className="flex flex-col h-full">
-          {/* Header - ANY CHAT centered */}
           <div className="py-5 px-4 text-center">
             <h1 className="text-xl font-bold text-gray-900">ANY CHAT</h1>
           </div>
 
-          {/* New Chat Button - Dark grey with white font */}
           <div className="px-4 pb-4">
             <button 
               onClick={createNewChat}
@@ -403,7 +404,6 @@ const ChatInterface = ({ user, onLogout }) => {
             </button>
           </div>
 
-          {/* Chat History with Date Groups - Hide scrollbar */}
           <div className="flex-1 px-4 overflow-y-auto scrollbar-hide">
             {Object.keys(groupedChats).length > 0 ? (
               Object.entries(groupedChats).map(([dateGroup, chats]) => (
@@ -438,7 +438,6 @@ const ChatInterface = ({ user, onLogout }) => {
             )}
           </div>
 
-          {/* User Profile with Three Dots Menu - White container with gray-700 background */}
           <div className="p-4" ref={userMenuRef}>
             <div className="bg-white rounded-lg p-3 shadow-sm">
               <div className="flex items-center justify-between">
@@ -466,7 +465,6 @@ const ChatInterface = ({ user, onLogout }) => {
                     <MoreVertical className="h-5 w-5 text-gray-700" />
                   </button>
 
-                  {/* Dropdown Menu */}
                   {showUserMenu && (
                     <div className="absolute bottom-full right-0 mb-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-2 z-50 animate-fade-in">
                       <div className="px-4 py-2 border-b border-gray-100">
@@ -507,7 +505,6 @@ const ChatInterface = ({ user, onLogout }) => {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-full bg-gray-50">
-        {/* Mobile Menu Button - Only shown when sidebar is closed on mobile */}
         {!sidebarOpen && (
           <button
             onClick={() => setSidebarOpen(true)}
@@ -520,7 +517,6 @@ const ChatInterface = ({ user, onLogout }) => {
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4 scrollbar-hide">
           {hasUserMessages ? (
-            // Show all user and bot messages
             messages.filter(m => m.type === 'user' || (m.type === 'bot' && m.id !== 1)).map((message) => (
               <div
                 key={message.id}
@@ -528,22 +524,19 @@ const ChatInterface = ({ user, onLogout }) => {
               >
                 <div className={`flex max-w-[75%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} space-x-3`}>
                   
-                  
                   {/* Message Content */}
                   <div>
                     <div className={`
                       ${message.type === 'user' 
                         ? 'bg-gray-700 text-white rounded-2xl px-4 py-3 shadow-sm' 
-                        : 'text-gray-800'} // Bot messages have no background or border
+                        : 'text-gray-800'}
                     `}>
                       {message.type === 'bot' ? (
-                        <ReactMarkdown 
-                          className="prose prose-sm max-w-none prose-p:text-gray-700 prose-p:leading-relaxed"
-                        >
-                          {message.content}
-                        </ReactMarkdown>
+                        <div className="prose prose-sm max-w-none">
+                          {renderBotMessage(message.content)}
+                        </div>
                       ) : (
-                        <p className="text-sm text-white">{message.content}</p>
+                        <p className="text-sm text-white whitespace-pre-wrap">{message.content}</p>
                       )}
                     </div>
                     <p className="text-xs text-gray-400 mt-1 ml-1">
@@ -554,7 +547,6 @@ const ChatInterface = ({ user, onLogout }) => {
               </div>
             ))
           ) : (
-            // Centered content when no user messages - Vertical list with heading
             <div className="h-full flex flex-col items-center justify-center -mt-16">
               <h2 className="text-3xl font-bold text-gray-800 mb-8">ASK ANYTHING YOU WANT</h2>
               <div className="w-full max-w-md space-y-3">
@@ -581,7 +573,7 @@ const ChatInterface = ({ user, onLogout }) => {
                 <div className="text-gray-800">
                   <div className="flex items-center space-x-2">
                     <Loader2 className="h-4 w-4 animate-spin text-gray-700" />
-                    <span className="text-sm text-gray-600">Analyzing...</span>
+                    <span className="text-sm text-gray-600">Analyzing documents...</span>
                   </div>
                 </div>
               </div>
