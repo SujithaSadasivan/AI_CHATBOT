@@ -76,6 +76,83 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 # ---------------------------
+# TOPIC DETECTION FUNCTION
+# ---------------------------
+
+def is_steel_related(question):
+    """
+    Check if the question is related to steel, engineering, or construction topics
+    """
+    question_lower = question.lower()
+    
+    # Steel and metallurgy related terms
+    steel_terms = [
+        'steel', 'metal', 'alloy', 'iron', 'carbon', 'stainless', 'mild steel',
+        'structural steel', 'beam', 'column', 'girder', 'truss', 'plate', 'sheet',
+        'coil', 'bar', 'rod', 'wire', 'pipe', 'tube', 'section', 'profile',
+        'strength', 'hardness', 'toughness', 'ductility', 'malleability',
+        'yield', 'tensile', 'compression', 'bending', 'shear', 'elastic', 'plastic',
+        'heat treatment', 'annealing', 'quenching', 'tempering', 'normalizing',
+        'welding', 'fabrication', 'machining', 'casting', 'forging', 'rolling',
+        'hot rolled', 'cold rolled', 'galvanized', 'coated', 'painted',
+        'corrosion', 'rust', 'oxidation', 'weathering', 'protective'
+    ]
+    
+    # Engineering and construction terms
+    engineering_terms = [
+        'building', 'bridge', 'structure', 'construction', 'architecture',
+        'design', 'drawing', 'blueprint', 'specification', 'standard', 'code',
+        'aisc', 'astm', 'iso', 'en', 'bs', 'aashto', 'eurocode', 'is code',
+        'load', 'force', 'stress', 'strain', 'deflection', 'stability',
+        'foundation', 'column', 'beam', 'slab', 'wall', 'roof', 'floor',
+        'connection', 'joint', 'bolt', 'weld', 'rivet', 'fastener', 'anchor',
+        'shop drawing', 'erection drawing', 'ga drawing', 'detail drawing',
+        'detailing', 'modeling', 'bim', 'cad', 'software', 'analysis',
+        'calculation', 'formula', 'equation', 'parameter', 'property',
+        'quality', 'inspection', 'testing', 'certification', 'compliance',
+        'safety', 'osha', 'risk', 'hazard', 'protection', 'prevention',
+        'maintenance', 'repair', 'retrofit', 'rehabilitation', 'demolition'
+    ]
+    
+    # Manufacturing and production terms
+    manufacturing_terms = [
+        'manufacturing', 'production', 'process', 'plant', 'factory', 'industry',
+        'mill', 'foundry', 'fabricator', 'supplier', 'vendor', 'distributor',
+        'raw material', 'finished product', 'semi-finished', 'stock', 'inventory',
+        'cutting', 'drilling', 'punching', 'forming', 'bending', 'assembling',
+        'automation', 'robotics', 'machinery', 'equipment', 'tool', 'die',
+        'surface finish', 'tolerance', 'dimension', 'measurement', 'gauge',
+        'defect', 'imperfection', 'crack', 'porosity', 'inclusion', 'lamination'
+    ]
+    
+    # Combine all terms
+    all_terms = steel_terms + engineering_terms + manufacturing_terms
+    
+    # Check if any term is in the question
+    for term in all_terms:
+        if term in question_lower:
+            return True
+    
+    # Check for common question patterns about steel/engineering
+    patterns = [
+        r'what is .* (steel|metal|alloy|beam|column|welding)',
+        r'how (to|do|can) (?:i )?(?:weld|fabricate|design|calculate|measure)',
+        r'types of (?:steel|beams|columns|connections|welds)',
+        r'difference between .* and .* (?:steel|metal|alloy)',
+        r'properties of (?:steel|metal|alloy)',
+        r'(?:steel|metal|alloy) (?:grades|standards|specifications)',
+        r'(?:aisc|astm|iso|en) .* standard',
+        r'(?:welding|fabrication|erection) (?:process|procedure|technique)',
+        r'how (?:much|many|long|heavy) .* (?:steel|beam|column)',
+    ]
+    
+    for pattern in patterns:
+        if re.search(pattern, question_lower):
+            return True
+    
+    return False
+
+# ---------------------------
 # HELPER FUNCTION FOR BULLET POINTS
 # ---------------------------
 
@@ -494,13 +571,44 @@ async def create_chat_message(message_data: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 # ---------------------------
-# ASK ENDPOINT (FIXED WITH PROPER BULLET POINT FORMATTING)
+# ASK ENDPOINT (FIXED WITH PROPER BULLET POINT FORMATTING AND TOPIC DETECTION)
 # ---------------------------
 
 @app.get("/ask")
 def ask(question: str, chat_id: Optional[str] = None):
     try:
         print(f"Processing question: {question[:50]}... for chat: {chat_id}")
+        
+        # Check if question is steel/engineering related
+        if not is_steel_related(question):
+            apology_message = (
+                "I'm specifically designed to answer questions about steel, "
+                "engineering, and construction topics. I couldn't find any "
+                "relevant information in my knowledge base for your question. "
+                "Please feel free to ask me about:\n\n"
+                "• Steel properties and grades\n"
+                "• Manufacturing processes\n"
+                "• Structural design and analysis\n"
+                "• Welding and fabrication techniques\n"
+                "• Engineering standards and codes\n"
+                "• Construction methods\n\n"
+                "How can I help you with steel or engineering today?"
+            )
+            
+            if chat_id:
+                bot_message = {
+                    "chat_id": chat_id,
+                    "type": "bot",
+                    "content": apology_message,
+                    "timestamp": datetime.utcnow()
+                }
+                chat_messages_collection.insert_one(bot_message)
+                chat_sessions_collection.update_one(
+                    {"_id": ObjectId(chat_id)},
+                    {"$set": {"updated_at": datetime.utcnow()}}
+                )
+            
+            return {"answer": apology_message}
         
         # 1️⃣ Embed question
         question_embedding = embed_model.encode(question)
@@ -582,6 +690,34 @@ def ask(question: str, chat_id: Optional[str] = None):
 
         # 6️⃣ Select the best chunk
         best_final_score, best_text, best_base_score, best_bonus = scored_chunks[0]
+        
+        # Check if the best score is too low (no good match found)
+        if best_final_score < 0.3:
+            apology_message = (
+                "I couldn't find specific information about that in my knowledge base. "
+                "I can help you with topics like:\n\n"
+                "• Steel properties and grades\n"
+                "• Manufacturing processes\n"
+                "• Structural design and analysis\n"
+                "• Welding and fabrication techniques\n"
+                "• Engineering standards and codes\n\n"
+                "Could you please rephrase your question or ask about something related to steel and engineering?"
+            )
+            
+            if chat_id:
+                bot_message = {
+                    "chat_id": chat_id,
+                    "type": "bot",
+                    "content": apology_message,
+                    "timestamp": datetime.utcnow()
+                }
+                chat_messages_collection.insert_one(bot_message)
+                chat_sessions_collection.update_one(
+                    {"_id": ObjectId(chat_id)},
+                    {"$set": {"updated_at": datetime.utcnow()}}
+                )
+            
+            return {"answer": apology_message}
         
         # If top chunk has low score but second chunk has good keywords, check second
         if best_final_score < 0.5 and len(scored_chunks) > 1:

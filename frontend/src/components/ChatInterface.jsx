@@ -5,9 +5,12 @@ import {
   Send, Bot, User, Loader2, Menu, X, 
   Wifi, WifiOff, History, PlusCircle, 
   Settings, LogOut, ChevronDown, MoreVertical,
-  Hammer, Factory, Beaker, BarChart3, Cog, CheckCircle
+  Hammer, Factory, Beaker, BarChart3, Cog, CheckCircle,
+  Download, Share2, Pin, Trash2, AlertTriangle, CheckCircle as CheckCircleIcon
 } from 'lucide-react';
 import axios from 'axios';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 const ChatInterface = ({ user, onLogout }) => {
   const [messages, setMessages] = useState([
@@ -26,9 +29,16 @@ const ChatInterface = ({ user, onLogout }) => {
   const [chatSessions, setChatSessions] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(null);
   const [chatMessages, setChatMessages] = useState({});
+  const [downloadingChat, setDownloadingChat] = useState(null);
+  const [chatMenuOpen, setChatMenuOpen] = useState(null);
+  const [deleteModal, setDeleteModal] = useState({ isOpen: false, chatId: null, chatTitle: '' });
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+  const [isCreatingChat, setIsCreatingChat] = useState(false); // Add this to prevent multiple clicks
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const userMenuRef = useRef(null);
+  const chatMenuRef = useRef(null);
+  const toastTimeoutRef = useRef(null);
 
   const API_URL = 'http://127.0.0.1:8000';
 
@@ -59,6 +69,17 @@ const ChatInterface = ({ user, onLogout }) => {
     scrollToBottom();
   }, [messages]);
 
+  // Close chat menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (chatMenuRef.current && !chatMenuRef.current.contains(event.target)) {
+        setChatMenuOpen(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // Close user menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -69,6 +90,27 @@ const ChatInterface = ({ user, onLogout }) => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Auto-hide toast
+  useEffect(() => {
+    if (toast.show) {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast({ show: false, message: '', type: 'success' });
+      }, 3000);
+    }
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, [toast.show]);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+  };
 
   const checkBackendConnection = async () => {
     try {
@@ -117,13 +159,58 @@ const ChatInterface = ({ user, onLogout }) => {
   };
 
   const createNewChat = async () => {
+    // Prevent multiple rapid clicks
+    if (isCreatingChat) return;
+    
     try {
+      setIsCreatingChat(true);
+      
       if (!user || !user.id) {
         console.error('User ID is missing:', user);
         alert('Please log in again');
         return;
       }
+
+      // Check if there's already an empty chat (no user messages) at the top
+      const hasEmptyChat = chatSessions.some(chat => {
+        const chatId = chat._id || chat.id;
+        const messages = chatMessages[chatId] || [];
+        // Check if chat has only the welcome message (id 1) or is empty
+        const hasOnlyWelcomeMessage = messages.length === 1 && messages[0]?.id === 1;
+        const hasNoUserMessages = !messages.some(m => m.type === 'user');
+        return (chat.title === 'New Chat' || chat.title?.startsWith('New Chat')) && 
+               (messages.length === 0 || hasOnlyWelcomeMessage || hasNoUserMessages);
+      });
+
+      if (hasEmptyChat) {
+        // If there's already an empty chat, just switch to it
+        const emptyChat = chatSessions.find(chat => {
+          const chatId = chat._id || chat.id;
+          const messages = chatMessages[chatId] || [];
+          const hasOnlyWelcomeMessage = messages.length === 1 && messages[0]?.id === 1;
+          const hasNoUserMessages = !messages.some(m => m.type === 'user');
+          return (chat.title === 'New Chat' || chat.title?.startsWith('New Chat')) && 
+                 (messages.length === 0 || hasOnlyWelcomeMessage || hasNoUserMessages);
+        });
+        
+        if (emptyChat) {
+          const emptyChatId = emptyChat._id || emptyChat.id;
+          setCurrentChatId(emptyChatId);
+          
+          // Load the messages for this empty chat
+          if (chatMessages[emptyChatId]) {
+            setMessages(chatMessages[emptyChatId]);
+          } else {
+            await fetchChatMessages(emptyChatId);
+          }
+          
+          showToast('Switched to existing empty chat');
+          setIsCreatingChat(false);
+          return;
+        }
+      }
       
+      // If no empty chat exists, create a new one
       const response = await axios.post(`${API_URL}/chat/create`, {
         user_id: user.id,
         title: 'New Chat'
@@ -139,8 +226,25 @@ const ChatInterface = ({ user, onLogout }) => {
         content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
         timestamp: new Date()
       }]);
+      
+      // Initialize empty messages array for this chat
+      setChatMessages(prev => ({
+        ...prev,
+        [newChat._id || newChat.id]: [{
+          id: 1,
+          type: 'bot',
+          content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
+          timestamp: new Date()
+        }]
+      }));
+      
+      showToast('New chat created');
+      
     } catch (error) {
       console.error('Error creating new chat:', error);
+      showToast('Failed to create new chat', 'error');
+    } finally {
+      setIsCreatingChat(false);
     }
   };
 
@@ -308,6 +412,211 @@ const ChatInterface = ({ user, onLogout }) => {
     }
   };
 
+  const downloadChatAsPDF = async (chatId, chatTitle) => {
+    try {
+      setDownloadingChat(chatId);
+      
+      // Get messages for this chat
+      let messagesToDownload = chatMessages[chatId];
+      
+      // If messages not loaded yet, fetch them
+      if (!messagesToDownload || messagesToDownload.length === 0) {
+        const response = await axios.get(`${API_URL}/chat/${chatId}/messages`);
+        messagesToDownload = response.data;
+      }
+      
+      if (!messagesToDownload || messagesToDownload.length === 0) {
+        showToast('No messages to download', 'error');
+        setDownloadingChat(null);
+        return;
+      }
+
+      // Create new PDF document
+      const doc = new jsPDF();
+      
+      // Set font
+      doc.setFont('helvetica');
+      
+      // Add title
+      doc.setFontSize(20);
+      doc.setTextColor(33, 33, 33);
+      doc.text('Chat History', 20, 20);
+      
+      // Add chat title and date
+      doc.setFontSize(12);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Chat: ${chatTitle}`, 20, 30);
+      doc.text(`Downloaded: ${new Date().toLocaleString()}`, 20, 37);
+      doc.text(`User: ${user?.full_name || user?.email || 'Unknown'}`, 20, 44);
+      
+      // Add line
+      doc.setDrawColor(200, 200, 200);
+      doc.line(20, 50, 190, 50);
+      
+      // Prepare messages for display
+      let yPosition = 60;
+      const lineHeight = 7;
+      const pageHeight = doc.internal.pageSize.height;
+      const margin = 20;
+      
+      messagesToDownload.forEach((message, index) => {
+        // Check if we need a new page
+        if (yPosition > pageHeight - 40) {
+          doc.addPage();
+          yPosition = 20;
+        }
+        
+        // Message type indicator
+        doc.setFontSize(11);
+        doc.setTextColor(message.type === 'user' ? (33, 150, 243) : (76, 175, 80));
+        doc.setFont('helvetica', 'bold');
+        const sender = message.type === 'user' ? 'You' : 'Steel RAG Assistant';
+        doc.text(`${sender} - ${formatTime(message.timestamp)}`, margin, yPosition);
+        
+        // Message content
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(50, 50, 50);
+        
+        // Split long messages into multiple lines
+        const contentLines = doc.splitTextToSize(message.content, 170);
+        
+        // Check if content needs a new page
+        if (yPosition + (contentLines.length * lineHeight) > pageHeight - 20) {
+          doc.addPage();
+          yPosition = 20;
+        }
+        
+        doc.text(contentLines, margin, yPosition + 5);
+        
+        // Update yPosition for next message
+        yPosition += (contentLines.length * lineHeight) + 15;
+        
+        // Add separator between messages
+        if (index < messagesToDownload.length - 1) {
+          if (yPosition > pageHeight - 30) {
+            doc.addPage();
+            yPosition = 20;
+          } else {
+            doc.setDrawColor(230, 230, 230);
+            doc.line(margin, yPosition - 8, 190, yPosition - 8);
+          }
+        }
+      });
+      
+      // Add footer with page numbers
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text(`Page ${i} of ${pageCount}`, 190 - 20, doc.internal.pageSize.height - 10);
+      }
+      
+      // Save the PDF
+      const fileName = `${chatTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+      showToast('Chat downloaded successfully!');
+      
+    } catch (error) {
+      console.error('Error downloading PDF:', error);
+      showToast('Failed to download chat as PDF', 'error');
+    } finally {
+      setDownloadingChat(null);
+    }
+  };
+
+  const handleShareChat = (chatId, chatTitle) => {
+    // Create share text
+    const shareText = `Check out my chat: ${chatTitle}`;
+    const url = window.location.href;
+    
+    // Try to use Web Share API if available
+    if (navigator.share) {
+      navigator.share({
+        title: chatTitle,
+        text: shareText,
+        url: url,
+      }).then(() => {
+        showToast('Shared successfully!');
+      }).catch(console.error);
+    } else {
+      // Fallback: copy to clipboard
+      navigator.clipboard.writeText(`${shareText}\n${url}`).then(() => {
+        showToast('Chat link copied to clipboard!');
+      }).catch(() => {
+        showToast('Unable to share', 'error');
+      });
+    }
+    
+    setChatMenuOpen(null);
+  };
+
+  const handlePinChat = (chatId) => {
+    // Toggle pin status
+    setChatSessions(prev => 
+      prev.map(chat => {
+        if (chat._id === chatId || chat.id === chatId) {
+          return { ...chat, isPinned: !chat.isPinned };
+        }
+        return chat;
+      }).sort((a, b) => {
+        // Sort pinned chats to the top
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        return 0;
+      })
+    );
+    
+    const chat = chatSessions.find(c => c._id === chatId || c.id === chatId);
+    showToast(chat?.isPinned ? 'Chat unpinned' : 'Chat pinned');
+    setChatMenuOpen(null);
+  };
+
+  const confirmDeleteChat = (chatId, chatTitle) => {
+    setDeleteModal({ isOpen: true, chatId, chatTitle });
+    setChatMenuOpen(null);
+  };
+
+  const handleDeleteChat = async () => {
+    const { chatId, chatTitle } = deleteModal;
+    
+    try {
+      await axios.delete(`${API_URL}/chat/${chatId}`);
+      
+      // Remove chat from state
+      setChatSessions(prev => prev.filter(chat => (chat._id !== chatId && chat.id !== chatId)));
+      setChatMessages(prev => {
+        const newState = { ...prev };
+        delete newState[chatId];
+        return newState;
+      });
+      
+      // If current chat is deleted, create a new one or clear messages
+      if (currentChatId === chatId) {
+        setCurrentChatId(null);
+        setMessages([{
+          id: 1,
+          type: 'bot',
+          content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
+          timestamp: new Date()
+        }]);
+      }
+      
+      showToast(`Chat "${chatTitle}" deleted successfully`);
+      
+    } catch (error) {
+      console.error('Error deleting chat:', error);
+      showToast('Failed to delete chat', 'error');
+    } finally {
+      setDeleteModal({ isOpen: false, chatId: null, chatTitle: '' });
+    }
+  };
+
+  const cancelDelete = () => {
+    setDeleteModal({ isOpen: false, chatId: null, chatTitle: '' });
+  };
+
   const groupedChats = chatSessions.reduce((groups, chat) => {
     const dateKey = formatDate(chat.created_at || chat.timestamp || new Date());
     if (!groups[dateKey]) {
@@ -316,6 +625,15 @@ const ChatInterface = ({ user, onLogout }) => {
     groups[dateKey].push(chat);
     return groups;
   }, {});
+
+  // Sort pinned chats to the top within each date group
+  Object.keys(groupedChats).forEach(key => {
+    groupedChats[key].sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return 0;
+    });
+  });
 
   const exploreTopics = [
     { icon: Hammer, text: 'Stainless steel properties' },
@@ -383,6 +701,54 @@ const ChatInterface = ({ user, onLogout }) => {
       className="flex h-screen bg-gray-100"
       style={{ fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif" }}
     >
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed top-4 right-4 z-50 flex items-center space-x-2 px-4 py-3 rounded-lg shadow-lg animate-slide-down ${
+          toast.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'
+        }`}>
+          {toast.type === 'success' ? (
+            <CheckCircleIcon className="h-5 w-5 text-green-500" />
+          ) : (
+            <AlertTriangle className="h-5 w-5 text-red-500" />
+          )}
+          <span className="text-sm font-medium">{toast.message}</span>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={cancelDelete}></div>
+          <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full p-6 animate-fade-in">
+            <div className="flex items-center space-x-3 text-red-600 mb-4">
+              <AlertTriangle className="h-6 w-6" />
+              <h3 className="text-lg font-semibold">Delete Chat</h3>
+            </div>
+            
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete <span className="font-semibold">"{deleteModal.chatTitle}"</span>? 
+              This action cannot be undone.
+            </p>
+            
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={cancelDelete}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteChat}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition flex items-center space-x-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span>Delete</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <div className={`
         fixed inset-y-0 left-0 transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
@@ -397,10 +763,19 @@ const ChatInterface = ({ user, onLogout }) => {
           <div className="px-4 pb-4">
             <button 
               onClick={createNewChat}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition shadow-md"
+              disabled={isCreatingChat}
+              className={`w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition shadow-md ${
+                isCreatingChat ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
             >
-              <PlusCircle className="h-4 w-4" />
-              <span className="text-sm font-medium">New Chat</span>
+              {isCreatingChat ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <PlusCircle className="h-4 w-4" />
+              )}
+              <span className="text-sm font-medium">
+                {isCreatingChat ? 'Creating...' : 'New Chat'}
+              </span>
             </button>
           </div>
 
@@ -413,20 +788,85 @@ const ChatInterface = ({ user, onLogout }) => {
                   </h2>
                   <div className="space-y-1">
                     {chats.map((chat) => (
-                      <button
+                      <div
                         key={chat._id || chat.id}
-                        onClick={() => loadChat(chat._id || chat.id)}
-                        className={`w-full text-left px-3 py-2 rounded-lg transition group ${
+                        className={`group relative flex items-center rounded-lg ${
                           currentChatId === (chat._id || chat.id) ? 'bg-gray-300' : 'hover:bg-gray-300'
                         }`}
                       >
-                        <p className="text-sm font-medium text-gray-800 group-hover:text-gray-900 truncate">
-                          {chat.title || 'New Chat'}
-                        </p>
-                        <p className="text-xs text-gray-600">
-                          {formatTime(chat.created_at || chat.timestamp || new Date())}
-                        </p>
-                      </button>
+                        <button
+                          onClick={() => loadChat(chat._id || chat.id)}
+                          className="flex-1 text-left px-3 py-2 truncate"
+                        >
+                          <div className="flex items-center space-x-2">
+                            {chat.isPinned && (
+                              <Pin className="h-3 w-3 text-gray-600 fill-current" />
+                            )}
+                            <p className="text-sm font-medium text-gray-800 group-hover:text-gray-900 truncate">
+                              {chat.title || 'New Chat'}
+                            </p>
+                          </div>
+                          <p className="text-xs text-gray-600">
+                            {formatTime(chat.created_at || chat.timestamp || new Date())}
+                          </p>
+                        </button>
+                        
+                        {/* Three dots menu */}
+                        <div className="absolute right-2 flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {/* Download button */}
+                          <button
+                            onClick={() => downloadChatAsPDF(chat._id || chat.id, chat.title || 'New Chat')}
+                            disabled={downloadingChat === (chat._id || chat.id)}
+                            className="p-1.5 bg-gray-400 hover:bg-gray-500 rounded-md disabled:opacity-50"
+                            title="Download chat as PDF"
+                          >
+                            {downloadingChat === (chat._id || chat.id) ? (
+                              <Loader2 className="h-3 w-3 text-white animate-spin" />
+                            ) : (
+                              <Download className="h-3 w-3 text-white" />
+                            )}
+                          </button>
+                          
+                          {/* Three dots button */}
+                          <button
+                            onClick={() => setChatMenuOpen(chatMenuOpen === (chat._id || chat.id) ? null : (chat._id || chat.id))}
+                            className="p-1.5 bg-gray-400 hover:bg-gray-500 rounded-md"
+                            title="More options"
+                          >
+                            <MoreVertical className="h-3 w-3 text-white" />
+                          </button>
+                        </div>
+
+                        {/* Chat menu dropdown */}
+                        {chatMenuOpen === (chat._id || chat.id) && (
+                          <div
+                            ref={chatMenuRef}
+                            className="absolute right-0 top-full mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50"
+                          >
+                            <button
+                              onClick={() => handleShareChat(chat._id || chat.id, chat.title || 'New Chat')}
+                              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+                            >
+                              <Share2 className="h-4 w-4" />
+                              <span>Share</span>
+                            </button>
+                            <button
+                              onClick={() => handlePinChat(chat._id || chat.id)}
+                              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+                            >
+                              <Pin className={`h-4 w-4 ${chat.isPinned ? 'fill-current' : ''}`} />
+                              <span>{chat.isPinned ? 'Unpin' : 'Pin'}</span>
+                            </button>
+                            <button
+                              onClick={() => confirmDeleteChat(chat._id || chat.id, chat.title || 'New Chat')}
+                              className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
