@@ -33,7 +33,7 @@ const ChatInterface = ({ user, onLogout }) => {
   const [chatMenuOpen, setChatMenuOpen] = useState(null);
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, chatId: null, chatTitle: '' });
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
-  const [isCreatingChat, setIsCreatingChat] = useState(false); // Add this to prevent multiple clicks
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const userMenuRef = useRef(null);
@@ -56,6 +56,9 @@ const ChatInterface = ({ user, onLogout }) => {
 
   useEffect(() => {
     checkBackendConnection();
+    // Check connection every 30 seconds
+    const interval = setInterval(checkBackendConnection, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -68,6 +71,13 @@ const ChatInterface = ({ user, onLogout }) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Focus input on mount and when loading finishes
+  useEffect(() => {
+    if (!isLoading && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isLoading]);
 
   // Close chat menu when clicking outside
   useEffect(() => {
@@ -114,9 +124,12 @@ const ChatInterface = ({ user, onLogout }) => {
 
   const checkBackendConnection = async () => {
     try {
-      await axios.get(`${API_URL}/health`, { timeout: 3000 });
+      console.log('Checking backend connection...');
+      const response = await axios.get(`${API_URL}/health`, { timeout: 5000 });
+      console.log('Backend response:', response.data);
       setBackendStatus('online');
     } catch (err) {
+      console.error('Backend connection failed:', err.message);
       setBackendStatus('offline');
     }
   };
@@ -297,7 +310,15 @@ const ChatInterface = ({ user, onLogout }) => {
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!inputMessage.trim() || isLoading || backendStatus !== 'online') return;
+    
+    // Don't send if message is empty or loading
+    if (!inputMessage.trim() || isLoading) return;
+
+    // Show warning if backend is offline but don't disable typing
+    if (backendStatus !== 'online') {
+      showToast('Backend server is not connected. Please check if the server is running.', 'error');
+      return;
+    }
 
     let chatId = currentChatId;
     if (!chatId) {
@@ -318,6 +339,7 @@ const ChatInterface = ({ user, onLogout }) => {
         setChatSessions(prev => [response.data, ...prev]);
       } catch (error) {
         console.error('Error creating chat:', error);
+        showToast('Failed to create chat session', 'error');
         return;
       }
     }
@@ -372,23 +394,30 @@ const ChatInterface = ({ user, onLogout }) => {
     } catch (error) {
       console.error('Error getting answer:', error);
       
-      const errorMessage = {
+      let errorMessage = "Sorry, I encountered an error. Please try again.";
+      
+      if (error.response && error.response.data && error.response.data.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = "Request timed out. Please try again.";
+      }
+      
+      const botErrorMessage = {
         id: Date.now() + 1,
         type: 'bot',
-        content: "Sorry, I encountered an error. Please try again.",
+        content: errorMessage,
         timestamp: new Date(),
         chat_id: chatId
       };
       
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => [...prev, botErrorMessage]);
       
       await saveMessage(chatId, {
         type: 'bot',
-        content: errorMessage.content
+        content: botErrorMessage.content
       });
     } finally {
       setIsLoading(false);
-      inputRef.current?.focus();
     }
   };
 
@@ -779,6 +808,8 @@ const ChatInterface = ({ user, onLogout }) => {
             </button>
           </div>
 
+          
+
           <div className="flex-1 px-4 overflow-y-auto scrollbar-hide">
             {Object.keys(groupedChats).length > 0 ? (
               Object.entries(groupedChats).map(([dateGroup, chats]) => (
@@ -1023,7 +1054,7 @@ const ChatInterface = ({ user, onLogout }) => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area */}
+        {/* Input Area - FIXED: Input is now always enabled except when loading */}
         <div className="bg-white px-6 py-4 shadow-sm">
           <form onSubmit={handleSendMessage} className="flex space-x-3">
             <input
@@ -1031,26 +1062,35 @@ const ChatInterface = ({ user, onLogout }) => {
               type="text"
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
-              placeholder="Ask about steel documents..."
+              placeholder={backendStatus === 'online' ? "Ask about steel documents..." : "Backend disconnected - Type to test..."}
               className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-700 focus:border-transparent text-sm"
-              disabled={isLoading || backendStatus !== 'online'}
+              disabled={isLoading} // Only disabled when loading, NOT based on backend status
             />
             <button
               type="submit"
-              disabled={isLoading || !inputMessage.trim() || backendStatus !== 'online'}
+              disabled={isLoading || !inputMessage.trim()}
               className={`
                 px-5 py-3 rounded-lg flex items-center justify-center
-                ${isLoading || !inputMessage.trim() || backendStatus !== 'online'
+                ${isLoading || !inputMessage.trim()
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-gray-700 text-white hover:bg-gray-800 transition shadow-md'}
+                  : backendStatus === 'online'
+                    ? 'bg-gray-700 text-white hover:bg-gray-800 transition shadow-md'
+                    : 'bg-yellow-500 text-white hover:bg-yellow-600 transition shadow-md'}
               `}
             >
               <Send className="h-4 w-4" />
             </button>
           </form>
-          <p className="text-xs text-gray-400 mt-2 text-center">
-            AI-generated responses may contain inaccuracies
-          </p>
+          <div className="flex items-center justify-center mt-2 space-x-2">
+            {backendStatus !== 'online' && (
+              <span className="text-xs text-yellow-600">
+                ⚠️ Backend disconnected - Messages won't be sent
+              </span>
+            )}
+            <p className="text-xs text-gray-400">
+              AI-generated responses may contain inaccuracies
+            </p>
+          </div>
         </div>
       </div>
 
