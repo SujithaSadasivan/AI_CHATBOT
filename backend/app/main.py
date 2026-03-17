@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from bson import ObjectId
 from app.routers import admin  # Import admin router
+from pydantic import BaseModel, validator
+from typing import Optional, Literal
 
 # Import auth modules
 from app.auth import (
@@ -19,6 +21,7 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import numpy as np
 import re
+import traceback
 
 app = FastAPI()
 
@@ -43,6 +46,7 @@ documents_collection = db["documents"]
 chat_sessions_collection = db["chat_sessions"]
 chat_messages_collection = db["chat_messages"]
 users_collection = db["users"]  # Make sure users collection is defined
+feedback_collection = db["feedback"]  # Add feedback collection
 
 # Create indexes for chat collections
 try:
@@ -50,6 +54,9 @@ try:
     chat_messages_collection.create_index([("chat_id", 1), ("timestamp", 1)])
     users_collection.create_index("username", unique=True)
     users_collection.create_index("email", unique=True)
+    feedback_collection.create_index([("user_id", 1), ("created_at", -1)])
+    feedback_collection.create_index([("chat_id", 1)])
+    feedback_collection.create_index([("rating", 1)])
     print("✅ Chat collections indexes created")
 except Exception as e:
     print(f"⚠️ Index creation warning: {e}")
@@ -59,6 +66,40 @@ print("✅ MongoDB Connected Successfully")
 # ---------------------------
 # MODELS
 # ---------------------------
+
+# Feedback Models - FIXED to handle both int and string ratings
+class FeedbackCreate(BaseModel):
+    chat_id: str
+    message_id: str
+    rating: int  # Changed from Literal to int with validator
+    feedback_text: Optional[str] = None
+    category: Optional[str] = None  # Changed from Literal to str with validator
+
+    @validator('rating')
+    def validate_rating(cls, v):
+        if v not in [1, 2, 3, 4, 5]:
+            raise ValueError('Rating must be between 1 and 5')
+        return v
+
+    @validator('category')
+    def validate_category(cls, v):
+        if v is not None and v not in ['accurate', 'inaccurate', 'helpful', 'unhelpful', 'other']:
+            raise ValueError('Invalid category')
+        return v
+
+class FeedbackResponse(BaseModel):
+    id: str
+    user_id: str
+    username: str
+    chat_id: str
+    chat_title: str
+    message_id: str
+    user_message: str
+    bot_response: str
+    rating: int
+    feedback_text: Optional[str]
+    category: Optional[str]
+    created_at: str
 
 # Embedding model
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -571,6 +612,109 @@ async def create_chat_message(message_data: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 # ---------------------------
+# FEEDBACK ENDPOINTS
+# ---------------------------
+
+@app.post("/api/feedback")
+async def submit_feedback(feedback: FeedbackCreate, current_user: User = Depends(get_current_active_user)):
+    """Submit feedback for a bot response"""
+    try:
+        print("="*50)
+        print("FEEDBACK SUBMISSION ATTEMPT")
+        print(f"User: {current_user.username}")
+        print(f"Raw feedback data: {feedback}")
+        print(f"Feedback dict: {feedback.dict()}")
+        print(f"Chat ID: {feedback.chat_id}")
+        print(f"Message ID: {feedback.message_id}")
+        print(f"Rating: {feedback.rating} (type: {type(feedback.rating)})")
+        print(f"Category: {feedback.category}")
+        print(f"Feedback text: {feedback.feedback_text}")
+        print("="*50)
+        
+        # Validate ObjectId format
+        try:
+            chat_obj_id = ObjectId(feedback.chat_id)
+            message_obj_id = ObjectId(feedback.message_id)
+            print(f"✓ Valid ObjectId format for chat: {chat_obj_id}")
+            print(f"✓ Valid ObjectId format for message: {message_obj_id}")
+        except Exception as e:
+            print(f"✗ Invalid ObjectId format: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid ID format: {str(e)}")
+        
+        # Get the original messages
+        chat = chat_sessions_collection.find_one({"_id": chat_obj_id})
+        if not chat:
+            print(f"✗ Chat not found with ID: {feedback.chat_id}")
+            raise HTTPException(status_code=404, detail="Chat not found")
+        print(f"✓ Chat found: {chat.get('title', 'Untitled')}")
+        
+        # Get the specific message and its context
+        messages = list(chat_messages_collection.find({
+            "chat_id": feedback.chat_id,
+            "$or": [
+                {"_id": message_obj_id},
+                {"type": "user"}
+            ]
+        }).sort("timestamp", -1).limit(2))
+        
+        print(f"Found {len(messages)} messages in context")
+        
+        user_message = next((m for m in messages if m["type"] == "user"), None)
+        bot_message = next((m for m in messages if str(m["_id"]) == feedback.message_id), None)
+        
+        if not bot_message:
+            print(f"✗ Bot message not found with ID: {feedback.message_id}")
+            raise HTTPException(status_code=404, detail="Message not found")
+        print(f"✓ Bot message found")
+        
+        if user_message:
+            print(f"✓ User message found")
+        
+        feedback_doc = {
+            "user_id": str(current_user.id),
+            "username": current_user.username,
+            "chat_id": feedback.chat_id,
+            "chat_title": chat.get("title", "Untitled Chat"),
+            "message_id": feedback.message_id,
+            "user_message": user_message["content"] if user_message else "Unknown",
+            "bot_response": bot_message["content"],
+            "rating": feedback.rating,
+            "feedback_text": feedback.feedback_text,
+            "category": feedback.category,
+            "created_at": datetime.utcnow()
+        }
+        
+        result = feedback_collection.insert_one(feedback_doc)
+        feedback_doc["_id"] = str(result.inserted_id)
+        
+        print(f"✅ Feedback saved with ID: {feedback_doc['_id']}")
+        return {"message": "Feedback submitted successfully", "id": feedback_doc["_id"]}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error submitting feedback: {str(e)}")
+        print(f"Error type: {type(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/feedback/user")
+async def get_user_feedback(current_user: User = Depends(get_current_active_user)):
+    """Get feedback submitted by the current user"""
+    try:
+        feedback = list(feedback_collection.find({"user_id": str(current_user.id)}).sort("created_at", -1))
+        
+        for item in feedback:
+            item["_id"] = str(item["_id"])
+            if "created_at" in item and isinstance(item["created_at"], datetime):
+                item["created_at"] = item["created_at"].isoformat()
+        
+        return feedback
+    except Exception as e:
+        print(f"Error fetching user feedback: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+# ---------------------------
 # ASK ENDPOINT (FIXED WITH PROPER BULLET POINT FORMATTING AND TOPIC DETECTION)
 # ---------------------------
 
@@ -582,7 +726,7 @@ def ask(question: str, chat_id: Optional[str] = None):
         # Check if question is steel/engineering related
         if not is_steel_related(question):
             apology_message = (
-                "I'm specifically designed to answer questions about steel, "
+                "I apologize, I'm specifically designed to answer questions about steel, "
                 "engineering, and construction topics. I couldn't find any "
                 "relevant information in my knowledge base for your question. "
                 "Please feel free to ask me about:\n\n"
@@ -787,11 +931,14 @@ def root():
             "/chat/{chat_id}": "DELETE - Delete chat session",
             "/chat/{chat_id}/messages": "GET - Get chat messages",
             "/chat/message": "POST - Save chat message",
+            "/api/feedback": "POST - Submit feedback",
+            "/api/feedback/user": "GET - Get user feedback",
             "/admin/dashboard": "GET - Admin dashboard (admin only)",
             "/admin/users": "GET - List all users (admin only)",
             "/admin/users/{user_id}/activity": "GET - User activity (admin only)",
             "/admin/searches/recent": "GET - Recent searches (admin only)",
-            "/admin/statistics": "GET - Detailed statistics (admin only)"
+            "/admin/statistics": "GET - Detailed statistics (admin only)",
+            "/admin/feedback": "GET - Get all feedback (admin only)"
         }
     }
 
@@ -812,6 +959,7 @@ def health_check():
     chat_sessions_count = chat_sessions_collection.count_documents({})
     chat_messages_count = chat_messages_collection.count_documents({})
     documents_count = documents_collection.count_documents({})
+    feedback_count = feedback_collection.count_documents({})
     
     # Check admin user exists
     admin_exists = users_collection.count_documents({"username": "admin"}) > 0
@@ -823,6 +971,7 @@ def health_check():
         "chat_sessions": chat_sessions_count,
         "chat_messages": chat_messages_count,
         "documents": documents_count,
+        "feedback": feedback_count,
         "admin_exists": admin_exists,
         "models": "loaded",
         "timestamp": datetime.utcnow().isoformat()

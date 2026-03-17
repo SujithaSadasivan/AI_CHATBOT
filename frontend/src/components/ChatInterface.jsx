@@ -6,11 +6,13 @@ import {
   Wifi, WifiOff, History, PlusCircle, 
   Settings, LogOut, ChevronDown, MoreVertical,
   Hammer, Factory, Beaker, BarChart3, Cog, CheckCircle,
-  Download, Share2, Pin, Trash2, AlertTriangle, CheckCircle as CheckCircleIcon
+  Download, Share2, Pin, Trash2, AlertTriangle, CheckCircle as CheckCircleIcon,
+  MessageCircle
 } from 'lucide-react';
 import axios from 'axios';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import FeedbackModal from './FeedbackModal';
 
 const ChatInterface = ({ user, onLogout }) => {
   const [messages, setMessages] = useState([
@@ -34,6 +36,7 @@ const ChatInterface = ({ user, onLogout }) => {
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, chatId: null, chatTitle: '' });
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isCreatingChat, setIsCreatingChat] = useState(false);
+  const [feedbackModal, setFeedbackModal] = useState({ isOpen: false, message: null, chatId: null });
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const userMenuRef = useRef(null);
@@ -306,6 +309,27 @@ const ChatInterface = ({ user, onLogout }) => {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // FIXED: Updated openFeedbackModal function to handle both id and _id
+  const openFeedbackModal = (message) => {
+    if (!currentChatId) {
+      showToast('Please start a chat first', 'error');
+      return;
+    }
+    
+    // Create a message object with a guaranteed id property
+    const messageWithId = {
+      ...message,
+      id: message.id || message._id || Date.now() // Fallback to timestamp if no id
+    };
+    
+    console.log('Opening feedback modal for message:', messageWithId);
+    setFeedbackModal({ isOpen: true, message: messageWithId, chatId: currentChatId });
+  };
+
+  const handleFeedbackSuccess = () => {
+    showToast('Thank you for your feedback!', 'success');
   };
 
   const handleSendMessage = async (e) => {
@@ -778,6 +802,15 @@ const ChatInterface = ({ user, onLogout }) => {
         </div>
       )}
 
+      {/* Feedback Modal */}
+      <FeedbackModal
+        isOpen={feedbackModal.isOpen}
+        onClose={() => setFeedbackModal({ isOpen: false, message: null, chatId: null })}
+        message={feedbackModal.message}
+        chatId={feedbackModal.chatId}
+        onSuccess={handleFeedbackSuccess}
+      />
+
       {/* Sidebar */}
       <div className={`
         fixed inset-y-0 left-0 transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
@@ -807,8 +840,6 @@ const ChatInterface = ({ user, onLogout }) => {
               </span>
             </button>
           </div>
-
-          
 
           <div className="flex-1 px-4 overflow-y-auto scrollbar-hide">
             {Object.keys(groupedChats).length > 0 ? (
@@ -961,7 +992,7 @@ const ChatInterface = ({ user, onLogout }) => {
                           onClick={onLogout}
                           className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
                         >
-                          <LogOut className="w-4 h-4" />
+                          <LogOut className="w-4 w-4" />
                           <span>Sign Out</span>
                         </button>
                       </div>
@@ -1003,8 +1034,23 @@ const ChatInterface = ({ user, onLogout }) => {
                         : 'text-gray-800'}
                     `}>
                       {message.type === 'bot' ? (
-                        <div className="prose prose-sm max-w-none">
-                          {renderBotMessage(message.content)}
+                        <div>
+                          <div className="prose prose-sm max-w-none">
+                            {renderBotMessage(message.content)}
+                          </div>
+                          {/* Feedback button - only show for bot messages that are not the welcome message */}
+                          {message.id !== 1 && (
+                            <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
+                              <button
+                                onClick={() => openFeedbackModal(message)}
+                                className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+                                title="Give feedback"
+                              >
+                                <MessageCircle className="h-3 w-3" />
+                                <span>Feedback</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <p className="text-sm text-white whitespace-pre-wrap">{message.content}</p>
@@ -1054,7 +1100,7 @@ const ChatInterface = ({ user, onLogout }) => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area - FIXED: Input is now always enabled except when loading */}
+        {/* Input Area */}
         <div className="bg-white px-6 py-4 shadow-sm">
           <form onSubmit={handleSendMessage} className="flex space-x-3">
             <input
@@ -1064,7 +1110,7 @@ const ChatInterface = ({ user, onLogout }) => {
               onChange={(e) => setInputMessage(e.target.value)}
               placeholder={backendStatus === 'online' ? "Ask about steel documents..." : "Backend disconnected - Type to test..."}
               className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-700 focus:border-transparent text-sm"
-              disabled={isLoading} // Only disabled when loading, NOT based on backend status
+              disabled={isLoading}
             />
             <button
               type="submit"

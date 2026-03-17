@@ -1,11 +1,17 @@
+// src/components/AdminDashboard.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   Users, MessageSquare, Search, Calendar, Clock,
   TrendingUp, Activity, UserCheck, LogOut, Menu,
   BarChart3, PieChart, Download, Filter, ChevronDown,
-  Settings, User, MoreVertical, X, Loader2, Bot
+  Settings, User, MoreVertical, X, Loader2, Bot,
+  Star, MessageCircle, ThumbsUp, ThumbsDown, AlertTriangle,
+  Mail, Phone, MapPin, Globe, Award
 } from 'lucide-react';
+import FeedbackList from './admin/FeedbackList';
 
 const AdminDashboard = ({ user, onLogout }) => {
   const [stats, setStats] = useState(null);
@@ -18,6 +24,14 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [dateRange, setDateRange] = useState(7);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [authError, setAuthError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [downloading, setDownloading] = useState({
+    dashboard: false,
+    users: false,
+    searches: false,
+    feedback: false
+  });
   const userMenuRef = useRef(null);
 
   const API_URL = 'http://127.0.0.1:8000';
@@ -45,45 +59,100 @@ const AdminDashboard = ({ user, onLogout }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Check token on mount
   useEffect(() => {
-    fetchDashboardData();
-    fetchUsers();
-    fetchRecentSearches();
+    const token = localStorage.getItem('token');
+    console.log('AdminDashboard - Token from localStorage:', token ? 'Token exists' : 'No token');
+    
+    if (!token) {
+      console.error('No authentication token found');
+      setAuthError(true);
+      setErrorMessage('No authentication token found. Please login again.');
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 3000);
+    } else {
+      // Fetch all data
+      fetchDashboardData();
+      fetchUsers();
+      fetchRecentSearches();
+    }
   }, []);
+
+  // Helper function to get auth headers
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.error('No authentication token found in localStorage');
+      setAuthError(true);
+      setErrorMessage('No authentication token found. Please login again.');
+      return null;
+    }
+    console.log('Using token:', token.substring(0, 20) + '...');
+    return {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
+  };
+
+  // Handle unauthorized response
+  const handleUnauthorized = () => {
+    console.error('Received 401 Unauthorized response');
+    setAuthError(true);
+    setErrorMessage('Your session has expired. Please login again.');
+    localStorage.removeItem('token');
+    setTimeout(() => {
+      window.location.href = '/login';
+    }, 3000);
+  };
 
   const fetchDashboardData = async () => {
     try {
-      const token = localStorage.getItem('token');
+      const headers = getAuthHeaders();
+      if (!headers) return;
+
+      console.log('Fetching dashboard data...');
       const response = await axios.get(`${API_URL}/admin/dashboard`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: headers
       });
+      console.log('Dashboard data received:', response.data);
       setStats(response.data);
     } catch (error) {
       console.error('Error fetching dashboard:', error);
+      if (error.response?.status === 401) {
+        handleUnauthorized();
+      } else {
+        setErrorMessage(`Error loading dashboard: ${error.message}`);
+      }
     }
   };
 
   const fetchUsers = async () => {
     try {
-      const token = localStorage.getItem('token');
-      console.log('Fetching users with token:', token ? 'Token exists' : 'No token');
-      
+      const headers = getAuthHeaders();
+      if (!headers) return;
+
+      console.log('Fetching users...');
       const response = await axios.get(`${API_URL}/admin/users?limit=50`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: headers
       });
       
-      console.log('Users API response:', response.data);
+      console.log('Users response:', response.data);
       
-      // The backend returns: { total: X, users: [...], skip: Y, limit: Z }
       if (response.data && response.data.users && Array.isArray(response.data.users)) {
-        console.log(`Found ${response.data.users.length} users`);
         setUsers(response.data.users);
+        console.log(`Loaded ${response.data.users.length} users`);
       } else {
-        console.error('Unexpected response format:', response.data);
+        console.error('Unexpected users response format:', response.data);
         setUsers([]);
       }
     } catch (error) {
       console.error('Error fetching users:', error);
+      if (error.response?.status === 401) {
+        handleUnauthorized();
+      } else {
+        setErrorMessage(`Error loading users: ${error.message}`);
+      }
       setUsers([]);
     } finally {
       setLoading(false);
@@ -92,40 +161,320 @@ const AdminDashboard = ({ user, onLogout }) => {
 
   const fetchRecentSearches = async () => {
     try {
-      const token = localStorage.getItem('token');
-      console.log('Fetching recent searches with token:', token ? 'Token exists' : 'No token');
-      
+      const headers = getAuthHeaders();
+      if (!headers) return;
+
+      console.log('Fetching recent searches...');
       const response = await axios.get(`${API_URL}/admin/searches/recent?limit=50`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: headers
       });
       
-      console.log('Searches API response:', response.data);
+      console.log('Searches response:', response.data);
       
-      // The backend returns an array directly for searches
       if (Array.isArray(response.data)) {
-        console.log(`Found ${response.data.length} searches`);
         setRecentSearches(response.data);
+        console.log(`Loaded ${response.data.length} searches`);
       } else {
-        console.error('Unexpected response format for searches:', response.data);
+        console.error('Unexpected searches response format:', response.data);
         setRecentSearches([]);
       }
     } catch (error) {
       console.error('Error fetching searches:', error);
+      if (error.response?.status === 401) {
+        handleUnauthorized();
+      } else {
+        setErrorMessage(`Error loading searches: ${error.message}`);
+      }
       setRecentSearches([]);
     }
   };
 
   const fetchUserActivity = async (userId) => {
     try {
-      const token = localStorage.getItem('token');
+      const headers = getAuthHeaders();
+      if (!headers) return;
+
+      console.log(`Fetching activity for user ${userId}...`);
       const response = await axios.get(
         `${API_URL}/admin/users/${userId}/activity?days=${dateRange}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: headers }
       );
       setUserActivity(response.data);
       setSelectedUser(userId);
     } catch (error) {
       console.error('Error fetching user activity:', error);
+      if (error.response?.status === 401) {
+        handleUnauthorized();
+      }
+    }
+  };
+
+  // ============= PDF DOWNLOAD FUNCTIONS =============
+
+  // Download Dashboard PDF
+  const downloadDashboardPDF = () => {
+    setDownloading(prev => ({ ...prev, dashboard: true }));
+    
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      // Header with gradient effect
+      doc.setFillColor(75, 85, 99);
+      doc.rect(0, 0, 210, 40, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.setFont('helvetica', 'bold');
+      doc.text('DASHBOARD REPORT', 20, 20);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 20, 30);
+      doc.text(`Generated by: ${user?.full_name || user?.email || 'Admin'}`, 20, 37);
+      
+      // Reset text color for content
+      doc.setTextColor(33, 33, 33);
+      
+      let yPosition = 55;
+      
+      // Overview Section
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text('📊 Overview', 20, yPosition);
+      yPosition += 10;
+      
+      // Stats in table format
+      const statsData = [
+        ['Total Users', stats?.total_users || 0],
+        ['Total Chats', stats?.total_chats || 0],
+        ['Total Messages', stats?.total_messages || 0],
+        ['Today\'s Activity', stats?.today_messages || 0],
+        ['New Users Today', stats?.today_users || 0],
+        ['New Chats Today', stats?.today_chats || 0]
+      ];
+      
+      autoTable(doc, {
+        startY: yPosition,
+        head: [['Metric', 'Value']],
+        body: statsData,
+        theme: 'grid',
+        headStyles: { fillColor: [75, 85, 99], textColor: [255, 255, 255], fontStyle: 'bold' },
+        styles: { fontSize: 11, cellPadding: 6 },
+        columnStyles: { 0: { fontStyle: 'bold' } },
+        margin: { left: 20, right: 20 }
+      });
+      
+      doc.save(`dashboard_report_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error('Error downloading dashboard PDF:', error);
+    } finally {
+      setDownloading(prev => ({ ...prev, dashboard: false }));
+    }
+  };
+
+  // Download Users PDF
+  const downloadUsersPDF = () => {
+    setDownloading(prev => ({ ...prev, users: true }));
+    
+    try {
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      // Header
+      doc.setFillColor(75, 85, 99);
+      doc.rect(0, 0, 297, 35, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.setFont('helvetica', 'bold');
+      doc.text('USERS MANAGEMENT REPORT', 20, 20);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 20, 30);
+      doc.text(`Total Users: ${users.length}`, 150, 30);
+      
+      doc.setTextColor(33, 33, 33);
+      
+      // Users table data
+      const tableHeaders = [['Name', 'Username', 'Email', 'Joined', 'Chats', 'Messages']];
+      const tableRows = users.map(userItem => [
+        userItem.full_name || 'N/A',
+        `@${userItem.username || 'unknown'}`,
+        userItem.email || 'N/A',
+        new Date(userItem.created_at).toLocaleDateString(),
+        userItem.chat_count || 0,
+        userItem.message_count || 0
+      ]);
+      
+      autoTable(doc, {
+        head: tableHeaders,
+        body: tableRows,
+        startY: 45,
+        theme: 'striped',
+        styles: { 
+          fontSize: 9,
+          cellPadding: 4,
+          lineColor: [200, 200, 200],
+          lineWidth: 0.1
+        },
+        headStyles: { 
+          fillColor: [75, 85, 99],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 10
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251]
+        },
+        margin: { left: 15, right: 15 }
+      });
+      
+      doc.save(`users_report_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error('Error downloading users PDF:', error);
+    } finally {
+      setDownloading(prev => ({ ...prev, users: false }));
+    }
+  };
+
+  // Download Searches PDF
+  const downloadSearchesPDF = () => {
+    setDownloading(prev => ({ ...prev, searches: true }));
+    
+    try {
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      // Header
+      doc.setFillColor(75, 85, 99);
+      doc.rect(0, 0, 297, 35, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.setFont('helvetica', 'bold');
+      doc.text('SEARCHES REPORT', 20, 20);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 20, 30);
+      doc.text(`Total Searches: ${recentSearches.length}`, 150, 30);
+      
+      doc.setTextColor(33, 33, 33);
+      
+      // Searches table data
+      const tableHeaders = [['User', 'Email', 'Search Query', 'Chat', 'Time']];
+      const tableRows = recentSearches.map(search => [
+        search.user?.full_name || search.user?.username || 'Unknown User',
+        search.user?.email || '',
+        search.query || 'N/A',
+        search.chat_title || 'General Chat',
+        new Date(search.timestamp).toLocaleString()
+      ]);
+      
+      autoTable(doc, {
+        head: tableHeaders,
+        body: tableRows,
+        startY: 45,
+        theme: 'striped',
+        styles: { 
+          fontSize: 9,
+          cellPadding: 4,
+          lineColor: [200, 200, 200],
+          lineWidth: 0.1
+        },
+        headStyles: { 
+          fillColor: [75, 85, 99],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 10
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251]
+        },
+        margin: { left: 15, right: 15 }
+      });
+      
+      doc.save(`searches_report_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error('Error downloading searches PDF:', error);
+    } finally {
+      setDownloading(prev => ({ ...prev, searches: false }));
+    }
+  };
+
+  // Download Feedback PDF
+  const downloadFeedbackPDF = () => {
+    setDownloading(prev => ({ ...prev, feedback: true }));
+    
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      // Header
+      doc.setFillColor(75, 85, 99);
+      doc.rect(0, 0, 210, 35, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.setFont('helvetica', 'bold');
+      doc.text('FEEDBACK REPORT', 20, 20);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 20, 30);
+      
+      doc.setTextColor(33, 33, 33);
+      
+      let yPosition = 45;
+      
+      // Feedback Summary
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text('📝 Feedback Summary', 20, yPosition);
+      yPosition += 10;
+      
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Feedback module is available in the web interface.', 20, yPosition);
+      yPosition += 8;
+      doc.text('Please use the interactive Feedback List component', 20, yPosition);
+      yPosition += 8;
+      doc.text('to view and manage user feedback.', 20, yPosition);
+      
+      yPosition += 15;
+      
+      // Stats placeholder
+      doc.setFillColor(249, 250, 251);
+      doc.roundedRect(20, yPosition, 170, 40, 3, 3, 'F');
+      
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Quick Stats', 25, yPosition + 10);
+      
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text('• Total feedback entries: View in Feedback List', 25, yPosition + 22);
+      doc.text('• Average rating: View in Feedback List', 25, yPosition + 32);
+      
+      doc.save(`feedback_report_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error('Error downloading feedback PDF:', error);
+    } finally {
+      setDownloading(prev => ({ ...prev, feedback: false }));
     }
   };
 
@@ -135,15 +484,6 @@ const AdminDashboard = ({ user, onLogout }) => {
       return new Date(dateString).toLocaleString();
     } catch (e) {
       return 'Invalid date';
-    }
-  };
-
-  const formatTime = (date) => {
-    if (!date) return 'N/A';
-    try {
-      return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (e) {
-      return 'Invalid time';
     }
   };
 
@@ -157,29 +497,23 @@ const AdminDashboard = ({ user, onLogout }) => {
     return 'A';
   };
 
-  // Helper function to safely get user display name from search item
-  const getUserDisplayName = (searchItem) => {
-    if (searchItem.user) {
-      return searchItem.user.full_name || searchItem.user.username || 'Unknown User';
-    }
-    return 'Unknown User';
-  };
-
-  // Helper function to safely get user email from search item
-  const getUserEmail = (searchItem) => {
-    if (searchItem.user && searchItem.user.email) {
-      return searchItem.user.email;
-    }
-    return '';
-  };
-
-  // Helper function to safely get chat title
-  const getChatTitle = (searchItem) => {
-    if (searchItem.chat_title) {
-      return searchItem.chat_title;
-    }
-    return 'General Chat';
-  };
+  // If authentication error, show message
+  if (authError) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="bg-white rounded-xl shadow-xl p-8 max-w-md text-center">
+          <AlertTriangle className="h-16 w-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Authentication Error</h2>
+          <p className="text-gray-600 mb-4">
+            {errorMessage || 'Your session has expired. Redirecting to login page...'}
+          </p>
+          <div className="flex justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-gray-700" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const StatCard = ({ title, value, icon: Icon, color }) => (
     <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
@@ -200,14 +534,14 @@ const AdminDashboard = ({ user, onLogout }) => {
       className="flex h-screen bg-gray-100"
       style={{ fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif" }}
     >
-      {/* Sidebar - Medium Gray theme (same as ChatInterface) */}
+      {/* Sidebar */}
       <div className={`
         fixed inset-y-0 left-0 transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         md:relative md:translate-x-0 transition duration-200 ease-in-out
         z-30 w-72 bg-gray-200 shadow-xl
       `}>
         <div className="flex flex-col h-full">
-          {/* Header - ADMIN PANEL centered */}
+          {/* Header */}
           <div className="py-5 px-4 text-center">
             <h1 className="text-xl font-bold text-gray-900">ADMIN PANEL</h1>
             <p className="text-xs text-gray-600 mt-1">Steel RAG Assistant</p>
@@ -242,9 +576,18 @@ const AdminDashboard = ({ user, onLogout }) => {
               <Search className="h-5 w-5" />
               <span className="text-sm font-medium">Searches</span>
             </button>
+            <button
+              onClick={() => setActiveTab('feedback')}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+                activeTab === 'feedback' ? 'bg-gray-300 text-gray-900' : 'text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              <Star className="h-5 w-5" />
+              <span className="text-sm font-medium">Feedback</span>
+            </button>
           </nav>
 
-          {/* User Profile - Same as ChatInterface */}
+          {/* User Profile */}
           <div className="p-4" ref={userMenuRef}>
             <div className="bg-white rounded-lg p-3 shadow-sm">
               <div className="flex items-center justify-between">
@@ -272,9 +615,8 @@ const AdminDashboard = ({ user, onLogout }) => {
                     <MoreVertical className="h-5 w-5 text-gray-700" />
                   </button>
 
-                  {/* Dropdown Menu */}
                   {showUserMenu && (
-                    <div className="absolute bottom-full right-0 mb-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-2 z-50 animate-fade-in">
+                    <div className="absolute bottom-full right-0 mb-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-2 z-50">
                       <div className="px-4 py-2 border-b border-gray-100">
                         <p className="text-xs text-gray-500">Signed in as</p>
                         <p className="text-sm font-medium text-gray-900 truncate">
@@ -324,7 +666,7 @@ const AdminDashboard = ({ user, onLogout }) => {
         )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="flex-1 overflow-y-auto">
           {loading ? (
             <div className="h-full flex items-center justify-center">
               <div className="flex items-center space-x-2">
@@ -335,8 +677,22 @@ const AdminDashboard = ({ user, onLogout }) => {
           ) : (
             <>
               {activeTab === 'dashboard' && stats && (
-                <div className="space-y-6">
-                  <h2 className="text-2xl font-bold text-gray-800">Dashboard Overview</h2>
+                <div className="p-6 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-bold text-gray-800">Dashboard Overview</h2>
+                    <button
+                      onClick={downloadDashboardPDF}
+                      disabled={downloading.dashboard}
+                      className="flex items-center space-x-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {downloading.dashboard ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      <span className="text-sm">Download PDF</span>
+                    </button>
+                  </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <StatCard
@@ -399,6 +755,12 @@ const AdminDashboard = ({ user, onLogout }) => {
                         >
                           View Recent Searches
                         </button>
+                        <button
+                          onClick={() => setActiveTab('feedback')}
+                          className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition text-gray-700 font-medium"
+                        >
+                          View Feedback
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -406,7 +768,7 @@ const AdminDashboard = ({ user, onLogout }) => {
               )}
 
               {activeTab === 'users' && (
-                <div className="space-y-6">
+                <div className="p-6 space-y-6">
                   <div className="flex justify-between items-center">
                     <h2 className="text-2xl font-bold text-gray-800">Users Management</h2>
                     <div className="flex items-center space-x-2">
@@ -418,6 +780,18 @@ const AdminDashboard = ({ user, onLogout }) => {
                         <option value={7}>Last 7 days</option>
                         <option value={30}>Last 30 days</option>
                       </select>
+                      <button
+                        onClick={downloadUsersPDF}
+                        disabled={downloading.users}
+                        className="flex items-center space-x-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {downloading.users ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                        <span className="text-sm">Download PDF</span>
+                      </button>
                     </div>
                   </div>
 
@@ -517,8 +891,22 @@ const AdminDashboard = ({ user, onLogout }) => {
               )}
 
               {activeTab === 'searches' && (
-                <div className="space-y-6">
-                  <h2 className="text-2xl font-bold text-gray-800">Recent Searches</h2>
+                <div className="p-6 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-bold text-gray-800">Recent Searches</h2>
+                    <button
+                      onClick={downloadSearchesPDF}
+                      disabled={downloading.searches}
+                      className="flex items-center space-x-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {downloading.searches ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      <span className="text-sm">Download PDF</span>
+                    </button>
+                  </div>
                   
                   <div className="bg-white rounded-xl shadow-md overflow-hidden">
                     <div className="overflow-x-auto">
@@ -537,17 +925,17 @@ const AdminDashboard = ({ user, onLogout }) => {
                               <tr key={search.id || index} className="hover:bg-gray-50 transition">
                                 <td className="px-6 py-4">
                                   <div className="font-medium text-gray-900">
-                                    {getUserDisplayName(search)}
+                                    {search.user?.full_name || search.user?.username || 'Unknown User'}
                                   </div>
                                   <div className="text-sm text-gray-500">
-                                    {getUserEmail(search)}
+                                    {search.user?.email || ''}
                                   </div>
                                 </td>
                                 <td className="px-6 py-4 text-sm text-gray-900">
                                   {search.query || 'N/A'}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-gray-500">
-                                  {getChatTitle(search)}
+                                  {search.chat_title || 'General Chat'}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-gray-500">
                                   {formatDate(search.timestamp)}
@@ -565,6 +953,30 @@ const AdminDashboard = ({ user, onLogout }) => {
                       </table>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'feedback' && (
+                <div className="p-6 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-bold text-gray-800">Feedback Management</h2>
+                    <button
+                      onClick={downloadFeedbackPDF}
+                      disabled={downloading.feedback}
+                      className="flex items-center space-x-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {downloading.feedback ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      <span className="text-sm">Download PDF</span>
+                    </button>
+                  </div>
+                  <FeedbackList 
+                    token={localStorage.getItem('token')} 
+                    currentUser={user}
+                  />
                 </div>
               )}
             </>
