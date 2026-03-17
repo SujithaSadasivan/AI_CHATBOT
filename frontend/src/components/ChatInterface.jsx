@@ -7,7 +7,7 @@ import {
   Settings, LogOut, ChevronDown, MoreVertical,
   Hammer, Factory, Beaker, BarChart3, Cog, CheckCircle,
   Download, Share2, Pin, Trash2, AlertTriangle, CheckCircle as CheckCircleIcon,
-  MessageCircle
+  MessageCircle, Volume2, VolumeX  // ← ADDED Volume2 and VolumeX here
 } from 'lucide-react';
 import axios from 'axios';
 import jsPDF from 'jspdf';
@@ -37,6 +37,9 @@ const ChatInterface = ({ user, onLogout }) => {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isCreatingChat, setIsCreatingChat] = useState(false);
   const [feedbackModal, setFeedbackModal] = useState({ isOpen: false, message: null, chatId: null });
+  // ADDED: Voice speaking state
+  const [speakingId, setSpeakingId] = useState(null);
+  
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const userMenuRef = useRef(null);
@@ -330,6 +333,28 @@ const ChatInterface = ({ user, onLogout }) => {
 
   const handleFeedbackSuccess = () => {
     showToast('Thank you for your feedback!', 'success');
+  };
+
+  // ADDED: Voice speaking function
+  const speakMessage = (text, messageId) => {
+    // Stop any currently playing speech
+    window.speechSynthesis.cancel();
+    
+    // If clicking on the same message that's speaking, stop it
+    if (speakingId === messageId) {
+      setSpeakingId(null);
+      return;
+    }
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    
+    utterance.onend = () => setSpeakingId(null);
+    utterance.onerror = () => setSpeakingId(null);
+    
+    window.speechSynthesis.speak(utterance);
+    setSpeakingId(messageId);
   };
 
   const handleSendMessage = async (e) => {
@@ -1027,7 +1052,7 @@ const ChatInterface = ({ user, onLogout }) => {
                 <div className={`flex max-w-[75%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} space-x-3`}>
                   
                   {/* Message Content */}
-                  <div>
+                  <div className="relative group"> {/* ADDED group class for hover effects */}
                     <div className={`
                       ${message.type === 'user' 
                         ? 'bg-gray-700 text-white rounded-2xl px-4 py-3 shadow-sm' 
@@ -1038,7 +1063,7 @@ const ChatInterface = ({ user, onLogout }) => {
                           <div className="prose prose-sm max-w-none">
                             {renderBotMessage(message.content)}
                           </div>
-                          {/* Feedback button - only show for bot messages that are not the welcome message */}
+                          {/* Feedback and Voice buttons - only show for bot messages that are not the welcome message */}
                           {message.id !== 1 && (
                             <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
                               <button
@@ -1048,6 +1073,24 @@ const ChatInterface = ({ user, onLogout }) => {
                               >
                                 <MessageCircle className="h-3 w-3" />
                                 <span>Feedback</span>
+                              </button>
+                              
+                              {/* ADDED: Voice button */}
+                              <button
+                                onClick={() => speakMessage(message.content, message.id)}
+                                className={`flex items-center space-x-1 px-2 py-1 text-xs rounded-lg transition ${
+                                  speakingId === message.id
+                                    ? 'bg-red-100 text-red-600'
+                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                                }`}
+                                title={speakingId === message.id ? 'Stop speaking' : 'Listen to response'}
+                              >
+                                {speakingId === message.id ? (
+                                  <VolumeX className="h-3 w-3" />
+                                ) : (
+                                  <Volume2 className="h-3 w-3" />
+                                )}
+                                <span>{speakingId === message.id ? 'Stop' : 'Listen'}</span>
                               </button>
                             </div>
                           )}
