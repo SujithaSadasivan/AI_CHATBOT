@@ -9,9 +9,10 @@ import {
   BarChart3, PieChart, Download, Filter, ChevronDown,
   Settings, User, MoreVertical, X, Loader2, Bot,
   Star, MessageCircle, ThumbsUp, ThumbsDown, AlertTriangle,
-  Mail, Phone, MapPin, Globe, Award
+  Mail, Phone, MapPin, Globe, Award, Upload, Database, BookOpen
 } from 'lucide-react';
 import FeedbackList from './admin/FeedbackList';
+import SettingsPanel from './admin/Settings'; // Import the Settings component
 
 const AdminDashboard = ({ user, onLogout }) => {
   const [stats, setStats] = useState(null);
@@ -585,6 +586,16 @@ const AdminDashboard = ({ user, onLogout }) => {
               <Star className="h-5 w-5" />
               <span className="text-sm font-medium">Feedback</span>
             </button>
+            {/* NEW: Settings Tab */}
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+                activeTab === 'settings' ? 'bg-gray-300 text-gray-900' : 'text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              <Settings className="h-5 w-5" />
+              <span className="text-sm font-medium">Settings</span>
+            </button>
           </nav>
 
           {/* User Profile */}
@@ -629,7 +640,13 @@ const AdminDashboard = ({ user, onLogout }) => {
                           <User className="w-4 h-4" />
                           <span>Profile</span>
                         </button>
-                        <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2">
+                        <button 
+                          onClick={() => {
+                            setActiveTab('settings');
+                            setShowUserMenu(false);
+                          }}
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+                        >
                           <Settings className="w-4 h-4" />
                           <span>Settings</span>
                         </button>
@@ -760,6 +777,12 @@ const AdminDashboard = ({ user, onLogout }) => {
                           className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition text-gray-700 font-medium"
                         >
                           View Feedback
+                        </button>
+                        <button
+                          onClick={() => setActiveTab('settings')}
+                          className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition text-gray-700 font-medium"
+                        >
+                          Settings & Upload PDFs
                         </button>
                       </div>
                     </div>
@@ -974,6 +997,16 @@ const AdminDashboard = ({ user, onLogout }) => {
                     </button>
                   </div>
                   <FeedbackList 
+                    token={localStorage.getItem('token')} 
+                    currentUser={user}
+                  />
+                </div>
+              )}
+
+              {/* NEW: Settings Tab */}
+              {activeTab === 'settings' && (
+                <div className="p-6">
+                  <SettingsPanel 
                     token={localStorage.getItem('token')} 
                     currentUser={user}
                   />

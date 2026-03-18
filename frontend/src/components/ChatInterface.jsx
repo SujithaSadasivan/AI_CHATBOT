@@ -7,7 +7,8 @@ import {
   Settings, LogOut, ChevronDown, MoreVertical,
   Hammer, Factory, Beaker, BarChart3, Cog, CheckCircle,
   Download, Share2, Pin, Trash2, AlertTriangle, CheckCircle as CheckCircleIcon,
-  MessageCircle, Volume2, VolumeX  // ← ADDED Volume2 and VolumeX here
+  MessageCircle, Volume2, VolumeX, Mic, Copy, Check,
+  Smile, ThumbsUp, ThumbsDown, Heart, Star, Award
 } from 'lucide-react';
 import axios from 'axios';
 import jsPDF from 'jspdf';
@@ -15,14 +16,22 @@ import 'jspdf-autotable';
 import FeedbackModal from './FeedbackModal';
 
 const ChatInterface = ({ user, onLogout }) => {
+  // Generate a truly unique ID for messages
+  const generateUniqueId = () => {
+    return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  };
+
+  // Initialize messages with proper IDs
   const [messages, setMessages] = useState([
     {
-      id: 1,
+      id: 'welcome_1',
       type: 'bot',
       content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
-      timestamp: new Date()
+      timestamp: new Date(),
+      reactions: {}
     }
   ]);
+  
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -37,16 +46,33 @@ const ChatInterface = ({ user, onLogout }) => {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isCreatingChat, setIsCreatingChat] = useState(false);
   const [feedbackModal, setFeedbackModal] = useState({ isOpen: false, message: null, chatId: null });
-  // ADDED: Voice speaking state
   const [speakingId, setSpeakingId] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recognitionTimeout, setRecognitionTimeout] = useState(null);
+  const [copiedMessageId, setCopiedMessageId] = useState(null);
+  // State for reactions
+  const [showReactionPicker, setShowReactionPicker] = useState(null);
+  const [messageReactions, setMessageReactions] = useState({});
   
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const userMenuRef = useRef(null);
   const chatMenuRef = useRef(null);
   const toastTimeoutRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const reactionPickerRef = useRef(null);
 
   const API_URL = 'http://127.0.0.1:8000';
+
+  // Available reactions - FIXED: Made emojis unique by adding a unique key
+  const reactions = [
+    { id: 'like', emoji: '👍', icon: ThumbsUp, label: 'Like', color: 'text-blue-500' },
+    { id: 'love', emoji: '❤️', icon: Heart, label: 'Love', color: 'text-red-500' },
+    { id: 'smile', emoji: '😊', icon: Smile, label: 'Smile', color: 'text-yellow-500' },
+    { id: 'celebrate', emoji: '🎉', icon: Award, label: 'Celebrate', color: 'text-green-500' },
+    { id: 'helpful', emoji: '👍', icon: ThumbsUp, label: 'Helpful', color: 'text-purple-500' },
+    { id: 'unhelpful', emoji: '👎', icon: ThumbsDown, label: 'Not helpful', color: 'text-gray-500' },
+  ];
 
   // Add SF Pro Display font
   useEffect(() => {
@@ -62,7 +88,6 @@ const ChatInterface = ({ user, onLogout }) => {
 
   useEffect(() => {
     checkBackendConnection();
-    // Check connection every 30 seconds
     const interval = setInterval(checkBackendConnection, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -78,25 +103,26 @@ const ChatInterface = ({ user, onLogout }) => {
     scrollToBottom();
   }, [messages]);
 
-  // Focus input on mount and when loading finishes
   useEffect(() => {
     if (!isLoading && inputRef.current) {
       inputRef.current.focus();
     }
   }, [isLoading]);
 
-  // Close chat menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (chatMenuRef.current && !chatMenuRef.current.contains(event.target)) {
         setChatMenuOpen(null);
+      }
+      if (reactionPickerRef.current && !reactionPickerRef.current.contains(event.target)) {
+        setShowReactionPicker(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Close user menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
@@ -106,6 +132,22 @@ const ChatInterface = ({ user, onLogout }) => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Cleanup recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          console.log('Recognition cleanup error:', e);
+        }
+      }
+      if (recognitionTimeout) {
+        clearTimeout(recognitionTimeout);
+      }
+    };
+  }, [recognitionTimeout]);
 
   // Auto-hide toast
   useEffect(() => {
@@ -168,17 +210,121 @@ const ChatInterface = ({ user, onLogout }) => {
       if (!chatId) return;
       
       const response = await axios.get(`${API_URL}/chat/${chatId}/messages`);
+      const messagesWithIds = (response.data || []).map(msg => ({
+        ...msg,
+        id: msg.id || msg._id || generateUniqueId(),
+        reactions: msg.reactions || {}
+      }));
+      
       setChatMessages(prev => ({
         ...prev,
-        [chatId]: response.data || []
+        [chatId]: messagesWithIds
       }));
+
+      const reactionsMap = {};
+      messagesWithIds.forEach(msg => {
+        if (msg.reactions && Object.keys(msg.reactions).length > 0) {
+          reactionsMap[msg.id] = msg.reactions;
+        }
+      });
+      setMessageReactions(prev => ({ ...prev, ...reactionsMap }));
     } catch (error) {
       console.error('Error fetching chat messages:', error);
     }
   };
 
+  // ============= REACTION FUNCTIONS =============
+  const handleReaction = async (messageId, reactionEmoji) => {
+    if (!user || !user.id) {
+      showToast('Please log in to react', 'error');
+      return;
+    }
+
+    // Only allow reactions on bot messages
+    const message = messages.find(m => m.id === messageId);
+    if (!message || message.type !== 'bot') {
+      showToast('You can only react to bot messages', 'error');
+      return;
+    }
+
+    try {
+      const currentReactions = messageReactions[messageId] || {};
+      const userReacted = currentReactions[user.id] === reactionEmoji;
+      
+      let updatedReactions;
+      
+      if (userReacted) {
+        updatedReactions = { ...currentReactions };
+        delete updatedReactions[user.id];
+      } else {
+        updatedReactions = {
+          ...currentReactions,
+          [user.id]: reactionEmoji
+        };
+      }
+
+      // Update local state
+      setMessageReactions(prev => ({
+        ...prev,
+        [messageId]: updatedReactions
+      }));
+
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId 
+          ? { ...msg, reactions: updatedReactions }
+          : msg
+      ));
+
+      if (currentChatId) {
+        setChatMessages(prev => ({
+          ...prev,
+          [currentChatId]: prev[currentChatId]?.map(msg =>
+            msg.id === messageId
+              ? { ...msg, reactions: updatedReactions }
+              : msg
+          )
+        }));
+      }
+
+      // Save to backend (commented out until endpoint is ready)
+      // try {
+      //   await axios.post(`${API_URL}/chat/message/${messageId}/reaction`, {
+      //     user_id: user.id,
+      //     reaction: userReacted ? null : reactionEmoji,
+      //     chat_id: currentChatId
+      //   });
+      // } catch (error) {
+      //   console.error('Error saving reaction to backend:', error);
+      //   // Don't show error toast as we already updated UI
+      // }
+
+      showToast(userReacted ? 'Reaction removed' : 'Reaction added', 'success');
+      setShowReactionPicker(null);
+
+    } catch (error) {
+      console.error('Error handling reaction:', error);
+      showToast('Failed to save reaction', 'error');
+    }
+  };
+
+  const getReactionCounts = (messageId) => {
+    const reactions = messageReactions[messageId] || {};
+    const counts = {};
+    
+    Object.values(reactions).forEach(emoji => {
+      counts[emoji] = (counts[emoji] || 0) + 1;
+    });
+    
+    return counts;
+  };
+
+  const getUserReaction = (messageId) => {
+    if (!user || !user.id) return null;
+    const reactions = messageReactions[messageId] || {};
+    return reactions[user.id] || null;
+  };
+
   const createNewChat = async () => {
-    // Prevent multiple rapid clicks
     if (isCreatingChat) return;
     
     try {
@@ -190,23 +336,20 @@ const ChatInterface = ({ user, onLogout }) => {
         return;
       }
 
-      // Check if there's already an empty chat (no user messages) at the top
       const hasEmptyChat = chatSessions.some(chat => {
         const chatId = chat._id || chat.id;
         const messages = chatMessages[chatId] || [];
-        // Check if chat has only the welcome message (id 1) or is empty
-        const hasOnlyWelcomeMessage = messages.length === 1 && messages[0]?.id === 1;
+        const hasOnlyWelcomeMessage = messages.length === 1 && messages[0]?.id === 'welcome_1';
         const hasNoUserMessages = !messages.some(m => m.type === 'user');
         return (chat.title === 'New Chat' || chat.title?.startsWith('New Chat')) && 
                (messages.length === 0 || hasOnlyWelcomeMessage || hasNoUserMessages);
       });
 
       if (hasEmptyChat) {
-        // If there's already an empty chat, just switch to it
         const emptyChat = chatSessions.find(chat => {
           const chatId = chat._id || chat.id;
           const messages = chatMessages[chatId] || [];
-          const hasOnlyWelcomeMessage = messages.length === 1 && messages[0]?.id === 1;
+          const hasOnlyWelcomeMessage = messages.length === 1 && messages[0]?.id === 'welcome_1';
           const hasNoUserMessages = !messages.some(m => m.type === 'user');
           return (chat.title === 'New Chat' || chat.title?.startsWith('New Chat')) && 
                  (messages.length === 0 || hasOnlyWelcomeMessage || hasNoUserMessages);
@@ -216,7 +359,6 @@ const ChatInterface = ({ user, onLogout }) => {
           const emptyChatId = emptyChat._id || emptyChat.id;
           setCurrentChatId(emptyChatId);
           
-          // Load the messages for this empty chat
           if (chatMessages[emptyChatId]) {
             setMessages(chatMessages[emptyChatId]);
           } else {
@@ -229,7 +371,6 @@ const ChatInterface = ({ user, onLogout }) => {
         }
       }
       
-      // If no empty chat exists, create a new one
       const response = await axios.post(`${API_URL}/chat/create`, {
         user_id: user.id,
         title: 'New Chat'
@@ -239,22 +380,19 @@ const ChatInterface = ({ user, onLogout }) => {
       setChatSessions(prev => [newChat, ...prev]);
       setCurrentChatId(newChat._id || newChat.id);
       
-      setMessages([{
-        id: 1,
+      const welcomeMessage = {
+        id: 'welcome_1',
         type: 'bot',
         content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
-        timestamp: new Date()
-      }]);
+        timestamp: new Date(),
+        reactions: {}
+      };
       
-      // Initialize empty messages array for this chat
+      setMessages([welcomeMessage]);
+      
       setChatMessages(prev => ({
         ...prev,
-        [newChat._id || newChat.id]: [{
-          id: 1,
-          type: 'bot',
-          content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
-          timestamp: new Date()
-        }]
+        [newChat._id || newChat.id]: [welcomeMessage]
       }));
       
       showToast('New chat created');
@@ -271,7 +409,20 @@ const ChatInterface = ({ user, onLogout }) => {
     setCurrentChatId(chatId);
     
     if (chatMessages[chatId]) {
-      setMessages(chatMessages[chatId]);
+      const messagesWithIds = chatMessages[chatId].map(msg => ({
+        ...msg,
+        id: msg.id || msg._id || generateUniqueId(),
+        reactions: msg.reactions || {}
+      }));
+      setMessages(messagesWithIds);
+      
+      const reactionsMap = {};
+      messagesWithIds.forEach(msg => {
+        if (msg.reactions && Object.keys(msg.reactions).length > 0) {
+          reactionsMap[msg.id] = msg.reactions;
+        }
+      });
+      setMessageReactions(prev => ({ ...prev, ...reactionsMap }));
     } else {
       await fetchChatMessages(chatId);
     }
@@ -285,7 +436,8 @@ const ChatInterface = ({ user, onLogout }) => {
     try {
       await axios.post(`${API_URL}/chat/message`, {
         chat_id: chatId,
-        ...messageData
+        ...messageData,
+        reactions: {}
       });
     } catch (error) {
       console.error('Error saving message:', error);
@@ -314,17 +466,15 @@ const ChatInterface = ({ user, onLogout }) => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // FIXED: Updated openFeedbackModal function to handle both id and _id
   const openFeedbackModal = (message) => {
     if (!currentChatId) {
       showToast('Please start a chat first', 'error');
       return;
     }
     
-    // Create a message object with a guaranteed id property
     const messageWithId = {
       ...message,
-      id: message.id || message._id || Date.now() // Fallback to timestamp if no id
+      id: message.id || message._id || generateUniqueId()
     };
     
     console.log('Opening feedback modal for message:', messageWithId);
@@ -335,12 +485,9 @@ const ChatInterface = ({ user, onLogout }) => {
     showToast('Thank you for your feedback!', 'success');
   };
 
-  // ADDED: Voice speaking function
   const speakMessage = (text, messageId) => {
-    // Stop any currently playing speech
     window.speechSynthesis.cancel();
     
-    // If clicking on the same message that's speaking, stop it
     if (speakingId === messageId) {
       setSpeakingId(null);
       return;
@@ -357,13 +504,144 @@ const ChatInterface = ({ user, onLogout }) => {
     setSpeakingId(messageId);
   };
 
+  const copyToClipboard = (text, messageId) => {
+    console.log('Copy button clicked for message ID:', messageId);
+    
+    if (!messageId) {
+      console.error('Message ID is undefined!');
+      showToast('Error: Message ID not found', 'error');
+      return;
+    }
+    
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedMessageId(messageId);
+      showToast('📋 Message copied to clipboard!', 'success');
+      
+      setTimeout(() => {
+        setCopiedMessageId(null);
+      }, 2000);
+    }).catch((err) => {
+      console.error('Copy failed:', err);
+      showToast('Failed to copy message', 'error');
+    });
+  };
+
+  const startVoiceInput = () => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      showToast('Please use Chrome or Edge for voice input', 'error');
+      return;
+    }
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        console.log('Error stopping recognition:', e);
+      }
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    setIsRecording(true);
+    showToast('🎤 Listening... Speak now', 'success');
+
+    const timeout = setTimeout(() => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          console.log('Timeout stop error:', e);
+        }
+      }
+      setIsRecording(false);
+      showToast('⏰ No speech detected. Please try again.', 'error');
+    }, 5000);
+    setRecognitionTimeout(timeout);
+
+    recognition.onresult = (event) => {
+      if (recognitionTimeout) {
+        clearTimeout(recognitionTimeout);
+        setRecognitionTimeout(null);
+      }
+
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          transcript = event.results[i][0].transcript;
+          break;
+        }
+      }
+
+      if (transcript) {
+        setInputMessage(transcript);
+        setIsRecording(false);
+        showToast('✅ Voice captured! Click send to ask', 'success');
+      }
+    };
+
+    recognition.onspeechend = () => {
+      console.log('Speech ended');
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      if (recognitionTimeout) {
+        clearTimeout(recognitionTimeout);
+        setRecognitionTimeout(null);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      
+      if (recognitionTimeout) {
+        clearTimeout(recognitionTimeout);
+        setRecognitionTimeout(null);
+      }
+
+      setIsRecording(false);
+      
+      if (event.error === 'not-allowed') {
+        showToast(
+          '❌ Microphone blocked. Click the lock icon in address bar → Site Settings → Microphone → Allow',
+          'error'
+        );
+      } else if (event.error === 'no-speech') {
+        showToast('No speech detected. Please try again and speak clearly.', 'error');
+      } else if (event.error === 'audio-capture') {
+        showToast('No microphone found. Please check your microphone.', 'error');
+      } else if (event.error === 'network') {
+        showToast('Network error. Please check your connection.', 'error');
+      } else {
+        showToast(`Error: ${event.error}. Please try again.`, 'error');
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (error) {
+      console.error('Failed to start recognition:', error);
+      setIsRecording(false);
+      if (recognitionTimeout) {
+        clearTimeout(recognitionTimeout);
+        setRecognitionTimeout(null);
+      }
+      showToast('Failed to start voice input', 'error');
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     
-    // Don't send if message is empty or loading
     if (!inputMessage.trim() || isLoading) return;
 
-    // Show warning if backend is offline but don't disable typing
     if (backendStatus !== 'online') {
       showToast('Backend server is not connected. Please check if the server is running.', 'error');
       return;
@@ -394,11 +672,12 @@ const ChatInterface = ({ user, onLogout }) => {
     }
 
     const userMessage = {
-      id: Date.now(),
+      id: generateUniqueId(),
       type: 'user',
       content: inputMessage,
       timestamp: new Date(),
-      chat_id: chatId
+      chat_id: chatId,
+      reactions: {}
     };
 
     const isFirstUserMessage = messages.filter(m => m.type === 'user').length === 0;
@@ -426,11 +705,13 @@ const ChatInterface = ({ user, onLogout }) => {
       });
 
       const botMessage = {
-        id: Date.now() + 1,
+        id: generateUniqueId(),
         type: 'bot',
         content: response.data.answer || "I couldn't find an answer to your question.",
         timestamp: new Date(),
-        chat_id: chatId
+        chat_id: chatId,
+        sources: response.data.sources || [],
+        reactions: {}
       };
 
       setMessages(prev => [...prev, botMessage]);
@@ -452,11 +733,12 @@ const ChatInterface = ({ user, onLogout }) => {
       }
       
       const botErrorMessage = {
-        id: Date.now() + 1,
+        id: generateUniqueId(),
         type: 'bot',
         content: errorMessage,
         timestamp: new Date(),
-        chat_id: chatId
+        chat_id: chatId,
+        reactions: {}
       };
       
       setMessages(prev => [...prev, botErrorMessage]);
@@ -494,10 +776,8 @@ const ChatInterface = ({ user, onLogout }) => {
     try {
       setDownloadingChat(chatId);
       
-      // Get messages for this chat
       let messagesToDownload = chatMessages[chatId];
       
-      // If messages not loaded yet, fetch them
       if (!messagesToDownload || messagesToDownload.length === 0) {
         const response = await axios.get(`${API_URL}/chat/${chatId}/messages`);
         messagesToDownload = response.data;
@@ -509,57 +789,46 @@ const ChatInterface = ({ user, onLogout }) => {
         return;
       }
 
-      // Create new PDF document
       const doc = new jsPDF();
       
-      // Set font
       doc.setFont('helvetica');
       
-      // Add title
       doc.setFontSize(20);
       doc.setTextColor(33, 33, 33);
       doc.text('Chat History', 20, 20);
       
-      // Add chat title and date
       doc.setFontSize(12);
       doc.setTextColor(100, 100, 100);
       doc.text(`Chat: ${chatTitle}`, 20, 30);
       doc.text(`Downloaded: ${new Date().toLocaleString()}`, 20, 37);
       doc.text(`User: ${user?.full_name || user?.email || 'Unknown'}`, 20, 44);
       
-      // Add line
       doc.setDrawColor(200, 200, 200);
       doc.line(20, 50, 190, 50);
       
-      // Prepare messages for display
       let yPosition = 60;
       const lineHeight = 7;
       const pageHeight = doc.internal.pageSize.height;
       const margin = 20;
       
       messagesToDownload.forEach((message, index) => {
-        // Check if we need a new page
         if (yPosition > pageHeight - 40) {
           doc.addPage();
           yPosition = 20;
         }
         
-        // Message type indicator
         doc.setFontSize(11);
         doc.setTextColor(message.type === 'user' ? (33, 150, 243) : (76, 175, 80));
         doc.setFont('helvetica', 'bold');
         const sender = message.type === 'user' ? 'You' : 'Steel RAG Assistant';
         doc.text(`${sender} - ${formatTime(message.timestamp)}`, margin, yPosition);
         
-        // Message content
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
         doc.setTextColor(50, 50, 50);
         
-        // Split long messages into multiple lines
         const contentLines = doc.splitTextToSize(message.content, 170);
         
-        // Check if content needs a new page
         if (yPosition + (contentLines.length * lineHeight) > pageHeight - 20) {
           doc.addPage();
           yPosition = 20;
@@ -567,10 +836,8 @@ const ChatInterface = ({ user, onLogout }) => {
         
         doc.text(contentLines, margin, yPosition + 5);
         
-        // Update yPosition for next message
         yPosition += (contentLines.length * lineHeight) + 15;
         
-        // Add separator between messages
         if (index < messagesToDownload.length - 1) {
           if (yPosition > pageHeight - 30) {
             doc.addPage();
@@ -582,7 +849,6 @@ const ChatInterface = ({ user, onLogout }) => {
         }
       });
       
-      // Add footer with page numbers
       const pageCount = doc.internal.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
@@ -591,7 +857,6 @@ const ChatInterface = ({ user, onLogout }) => {
         doc.text(`Page ${i} of ${pageCount}`, 190 - 20, doc.internal.pageSize.height - 10);
       }
       
-      // Save the PDF
       const fileName = `${chatTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.pdf`;
       doc.save(fileName);
       showToast('Chat downloaded successfully!');
@@ -605,11 +870,9 @@ const ChatInterface = ({ user, onLogout }) => {
   };
 
   const handleShareChat = (chatId, chatTitle) => {
-    // Create share text
     const shareText = `Check out my chat: ${chatTitle}`;
     const url = window.location.href;
     
-    // Try to use Web Share API if available
     if (navigator.share) {
       navigator.share({
         title: chatTitle,
@@ -619,7 +882,6 @@ const ChatInterface = ({ user, onLogout }) => {
         showToast('Shared successfully!');
       }).catch(console.error);
     } else {
-      // Fallback: copy to clipboard
       navigator.clipboard.writeText(`${shareText}\n${url}`).then(() => {
         showToast('Chat link copied to clipboard!');
       }).catch(() => {
@@ -631,7 +893,6 @@ const ChatInterface = ({ user, onLogout }) => {
   };
 
   const handlePinChat = (chatId) => {
-    // Toggle pin status
     setChatSessions(prev => 
       prev.map(chat => {
         if (chat._id === chatId || chat.id === chatId) {
@@ -639,7 +900,6 @@ const ChatInterface = ({ user, onLogout }) => {
         }
         return chat;
       }).sort((a, b) => {
-        // Sort pinned chats to the top
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
         return 0;
@@ -662,7 +922,6 @@ const ChatInterface = ({ user, onLogout }) => {
     try {
       await axios.delete(`${API_URL}/chat/${chatId}`);
       
-      // Remove chat from state
       setChatSessions(prev => prev.filter(chat => (chat._id !== chatId && chat.id !== chatId)));
       setChatMessages(prev => {
         const newState = { ...prev };
@@ -670,14 +929,14 @@ const ChatInterface = ({ user, onLogout }) => {
         return newState;
       });
       
-      // If current chat is deleted, create a new one or clear messages
       if (currentChatId === chatId) {
         setCurrentChatId(null);
         setMessages([{
-          id: 1,
+          id: 'welcome_1',
           type: 'bot',
           content: "Hello! I'm your **Steel RAG Assistant**. I can help you with:\n\n• Steel properties and grades\n• Manufacturing processes\n• Technical specifications\n\nWhat would you like to know?",
-          timestamp: new Date()
+          timestamp: new Date(),
+          reactions: {}
         }]);
       }
       
@@ -704,7 +963,6 @@ const ChatInterface = ({ user, onLogout }) => {
     return groups;
   }, {});
 
-  // Sort pinned chats to the top within each date group
   Object.keys(groupedChats).forEach(key => {
     groupedChats[key].sort((a, b) => {
       if (a.isPinned && !b.isPinned) return -1;
@@ -732,15 +990,12 @@ const ChatInterface = ({ user, onLogout }) => {
 
   const hasUserMessages = messages.some(m => m.type === 'user');
 
-  // Custom component to render bot messages with proper format
   const renderBotMessage = (content) => {
-    // Split by newlines
     const lines = content.split('\n');
     
     return lines.map((line, index) => {
       const trimmedLine = line.trim();
       
-      // First line is the sub-heading (bold)
       if (index === 0 && trimmedLine && !trimmedLine.startsWith('•')) {
         return (
           <p key={index} className="text-gray-800 font-bold text-base mb-3 mt-1">
@@ -748,7 +1003,6 @@ const ChatInterface = ({ user, onLogout }) => {
           </p>
         );
       }
-      // Bullet points
       else if (trimmedLine.startsWith('•')) {
         return (
           <div key={index} className="flex items-start ml-2 mb-2">
@@ -759,11 +1013,9 @@ const ChatInterface = ({ user, onLogout }) => {
           </div>
         );
       }
-      // Empty line
       else if (trimmedLine === '') {
         return <div key={index} className="h-1" />;
       }
-      // Regular text (fallback)
       else {
         return (
           <p key={index} className="text-gray-700 mb-2 leading-relaxed">
@@ -898,9 +1150,7 @@ const ChatInterface = ({ user, onLogout }) => {
                           </p>
                         </button>
                         
-                        {/* Three dots menu */}
                         <div className="absolute right-2 flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {/* Download button */}
                           <button
                             onClick={() => downloadChatAsPDF(chat._id || chat.id, chat.title || 'New Chat')}
                             disabled={downloadingChat === (chat._id || chat.id)}
@@ -914,7 +1164,6 @@ const ChatInterface = ({ user, onLogout }) => {
                             )}
                           </button>
                           
-                          {/* Three dots button */}
                           <button
                             onClick={() => setChatMenuOpen(chatMenuOpen === (chat._id || chat.id) ? null : (chat._id || chat.id))}
                             className="p-1.5 bg-gray-400 hover:bg-gray-500 rounded-md"
@@ -924,7 +1173,6 @@ const ChatInterface = ({ user, onLogout }) => {
                           </button>
                         </div>
 
-                        {/* Chat menu dropdown */}
                         {chatMenuOpen === (chat._id || chat.id) && (
                           <div
                             ref={chatMenuRef}
@@ -1044,68 +1292,167 @@ const ChatInterface = ({ user, onLogout }) => {
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4 scrollbar-hide">
           {hasUserMessages ? (
-            messages.filter(m => m.type === 'user' || (m.type === 'bot' && m.id !== 1)).map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div className={`flex max-w-[75%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} space-x-3`}>
-                  
-                  {/* Message Content */}
-                  <div className="relative group"> {/* ADDED group class for hover effects */}
-                    <div className={`
-                      ${message.type === 'user' 
-                        ? 'bg-gray-700 text-white rounded-2xl px-4 py-3 shadow-sm' 
-                        : 'text-gray-800'}
-                    `}>
-                      {message.type === 'bot' ? (
-                        <div>
-                          <div className="prose prose-sm max-w-none">
-                            {renderBotMessage(message.content)}
-                          </div>
-                          {/* Feedback and Voice buttons - only show for bot messages that are not the welcome message */}
-                          {message.id !== 1 && (
-                            <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
-                              <button
-                                onClick={() => openFeedbackModal(message)}
-                                className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
-                                title="Give feedback"
-                              >
-                                <MessageCircle className="h-3 w-3" />
-                                <span>Feedback</span>
-                              </button>
-                              
-                              {/* ADDED: Voice button */}
-                              <button
-                                onClick={() => speakMessage(message.content, message.id)}
-                                className={`flex items-center space-x-1 px-2 py-1 text-xs rounded-lg transition ${
-                                  speakingId === message.id
-                                    ? 'bg-red-100 text-red-600'
-                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-                                }`}
-                                title={speakingId === message.id ? 'Stop speaking' : 'Listen to response'}
-                              >
-                                {speakingId === message.id ? (
-                                  <VolumeX className="h-3 w-3" />
-                                ) : (
-                                  <Volume2 className="h-3 w-3" />
-                                )}
-                                <span>{speakingId === message.id ? 'Stop' : 'Listen'}</span>
-                              </button>
+            messages.filter(m => m.type === 'user' || (m.type === 'bot' && m.id !== 'welcome_1')).map((message) => {
+              const messageId = message.id || message._id || generateUniqueId();
+              const reactionCounts = getReactionCounts(messageId);
+              const userReaction = getUserReaction(messageId);
+              
+              return (
+                <div
+                  key={messageId}
+                  className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div className={`flex max-w-[75%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} space-x-3`}>
+                    
+                    {/* Message Content */}
+                    <div className="relative group">
+                      <div className={`
+                        ${message.type === 'user' 
+                          ? 'bg-gray-700 text-white rounded-2xl px-4 py-3 shadow-sm' 
+                          : 'text-gray-800'}
+                      `}>
+                        {message.type === 'bot' ? (
+                          <div>
+                            <div className="prose prose-sm max-w-none">
+                              {renderBotMessage(message.content)}
                             </div>
-                          )}
+                            
+                            {/* Sources - if available */}
+                            {message.sources && message.sources.length > 0 && (
+                              <div className="mt-2 pt-2 border-t border-gray-200">
+                                <p className="text-xs text-gray-500 mb-1">Sources:</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {message.sources.map((source, idx) => (
+                                    <span key={idx} className="text-xs bg-gray-100 px-2 py-1 rounded">
+                                      📄 {source}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-white whitespace-pre-wrap">{message.content}</p>
+                        )}
+                      </div>
+                      
+                      {/* Reactions Display - Only for bot messages */}
+                      {message.type === 'bot' && Object.keys(reactionCounts).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {Object.entries(reactionCounts).map(([emoji, count]) => (
+                            <span
+                              key={`${messageId}-${emoji}`} // FIXED: Added messageId to make key unique
+                              className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-xs ${
+                                userReaction === emoji
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : 'bg-gray-100 text-gray-700'
+                              }`}
+                            >
+                              <span>{emoji}</span>
+                              <span>{count}</span>
+                            </span>
+                          ))}
                         </div>
-                      ) : (
-                        <p className="text-sm text-white whitespace-pre-wrap">{message.content}</p>
                       )}
+                      
+                      {/* Message Actions - Different for user vs bot messages */}
+                      <div className="flex items-center space-x-2 mt-2">
+                        {/* Reaction Button - Only for bot messages */}
+                        {message.type === 'bot' && (
+                          <div className="relative">
+                            <button
+                              onClick={() => setShowReactionPicker(showReactionPicker === messageId ? null : messageId)}
+                              className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+                              title="Add reaction"
+                            >
+                              <Smile className="h-3 w-3" />
+                              <span>React</span>
+                            </button>
+                            
+                            {/* Reaction Picker */}
+                            {showReactionPicker === messageId && (
+                              <div
+                                ref={reactionPickerRef}
+                                className="absolute bottom-full left-0 mb-2 bg-white rounded-lg shadow-xl border border-gray-200 p-2 z-50 flex space-x-1"
+                              >
+                                {reactions.map((reaction) => {
+                                  const IconComponent = reaction.icon;
+                                  const isActive = userReaction === reaction.emoji;
+                                  return (
+                                    <button
+                                      key={reaction.id} // FIXED: Using unique id instead of emoji
+                                      onClick={() => handleReaction(messageId, reaction.emoji)}
+                                      className={`p-2 rounded-lg transition hover:bg-gray-100 ${
+                                        isActive ? 'bg-blue-100' : ''
+                                      }`}
+                                      title={reaction.label}
+                                    >
+                                      <IconComponent className={`h-4 w-4 ${reaction.color}`} />
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Feedback button - only for bot messages */}
+                        {message.type === 'bot' && message.id !== 'welcome_1' && (
+                          <button
+                            onClick={() => openFeedbackModal(message)}
+                            className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+                            title="Give feedback"
+                          >
+                            <MessageCircle className="h-3 w-3" />
+                            <span>Feedback</span>
+                          </button>
+                        )}
+                        
+                        {/* Copy button - for all messages */}
+                        <button
+                          onClick={() => copyToClipboard(message.content, messageId)}
+                          className={`flex items-center space-x-1 px-2 py-1 text-xs rounded-lg transition ${
+                            copiedMessageId === messageId
+                              ? 'bg-green-100 text-green-600'
+                              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                          }`}
+                          title="Copy message"
+                        >
+                          {copiedMessageId === messageId ? (
+                            <Check className="h-3 w-3" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                          <span>{copiedMessageId === messageId ? 'Copied!' : 'Copy'}</span>
+                        </button>
+                        
+                        {/* Voice button - for all messages */}
+                        <button
+                          onClick={() => speakMessage(message.content, messageId)}
+                          className={`flex items-center space-x-1 px-2 py-1 text-xs rounded-lg transition ${
+                            speakingId === messageId
+                              ? 'bg-red-100 text-red-600'
+                              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                          }`}
+                          title={speakingId === messageId ? 'Stop speaking' : 'Listen to response'}
+                        >
+                          {speakingId === messageId ? (
+                            <VolumeX className="h-3 w-3" />
+                          ) : (
+                            <Volume2 className="h-3 w-3" />
+                          )}
+                          <span>{speakingId === messageId ? 'Stop' : 'Listen'}</span>
+                        </button>
+                      </div>
+                      
+                      <p className="text-xs text-gray-400 mt-1 ml-1">
+                        {formatTime(message.timestamp)}
+                      </p>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1 ml-1">
-                      {formatTime(message.timestamp)}
-                    </p>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="h-full flex flex-col items-center justify-center -mt-16">
               <h2 className="text-3xl font-bold text-gray-800 mb-8">ASK ANYTHING YOU WANT</h2>
@@ -1155,6 +1502,23 @@ const ChatInterface = ({ user, onLogout }) => {
               className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-700 focus:border-transparent text-sm"
               disabled={isLoading}
             />
+            
+            {/* Voice Input Button */}
+            <button
+              type="button"
+              onClick={startVoiceInput}
+              disabled={isRecording || isLoading}
+              className={`px-5 py-3 rounded-lg flex items-center justify-center transition ${
+                isRecording 
+                  ? 'bg-red-500 text-white animate-pulse' 
+                  : 'bg-gray-500 text-white hover:bg-gray-600'
+              } ${(isRecording || isLoading) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title="Click and speak your question"
+            >
+              <Mic className="h-5 w-5" />
+            </button>
+            
+            {/* Send Button */}
             <button
               type="submit"
               disabled={isLoading || !inputMessage.trim()}
